@@ -111,16 +111,17 @@ echo -e "${CYAN}[3/4]${RESET} 安装 ubti / ubtr 到 ${BIN_DIR}..."
 
 # 如果通过 curl | bash 运行，需要先下载脚本文件
 RAW_BASE="https://raw.githubusercontent.com/tingfeng347/ubtools/main"
-if [[ ! -f "$SCRIPT_DIR/ubti" ]] || [[ ! -f "$SCRIPT_DIR/ubtr" ]]; then
+if [[ ! -f "$SCRIPT_DIR/bin/ubti" ]] || [[ ! -f "$SCRIPT_DIR/bin/ubtr" ]]; then
     TMPDIR="$(mktemp -d)"
+    mkdir -p "$TMPDIR/bin"
     echo -e "  正在下载脚本..."
-    curl -fsSL "$RAW_BASE/ubti" -o "$TMPDIR/ubti"
-    curl -fsSL "$RAW_BASE/ubtr" -o "$TMPDIR/ubtr"
+    curl -fsSL "$RAW_BASE/bin/ubti" -o "$TMPDIR/bin/ubti"
+    curl -fsSL "$RAW_BASE/bin/ubtr" -o "$TMPDIR/bin/ubtr"
     SCRIPT_DIR="$TMPDIR"
 fi
 
-sudo cp "$SCRIPT_DIR/ubti" "$BIN_DIR/ubti"
-sudo cp "$SCRIPT_DIR/ubtr" "$BIN_DIR/ubtr"
+sudo cp "$SCRIPT_DIR/bin/ubti" "$BIN_DIR/ubti"
+sudo cp "$SCRIPT_DIR/bin/ubtr" "$BIN_DIR/ubtr"
 sudo chmod +x "$BIN_DIR/ubti" "$BIN_DIR/ubtr"
 
 # 清理临时目录
