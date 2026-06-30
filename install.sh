@@ -14,6 +14,13 @@ RESET='\033[0m'
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# --- 检查是否为 Ubuntu ---
+if ! grep -qi 'ubuntu' /etc/os-release 2>/dev/null; then
+    echo -e "${RED}错误：此脚本仅支持 Ubuntu 系统。${RESET}"
+    echo -e "当前系统：$(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo '未知')"
+    exit 1
+fi
+
 echo -e "${CYAN}========================================${RESET}"
 echo -e "${CYAN}  ubtools - Ubuntu Package TUI Tools${RESET}"
 echo -e "${CYAN}========================================${RESET}"
@@ -22,7 +29,7 @@ echo ""
 # --- 自动安装 fzf ---
 install_fzf() {
     echo -e "${YELLOW}  未检测到 fzf，核心依赖，必须安装。${RESET}"
-    read -rp "  是否安装? [Y/n] " yn
+    read -rp "  是否安装? [Y/n] " yn < /dev/tty
     if [[ "$yn" =~ ^[Nn] ]]; then
         echo -e "${RED}  已取消，ubti/ubtr 无法运行。${RESET}"
         exit 1
@@ -35,7 +42,7 @@ install_fzf() {
 # --- 自动安装 flatpak + flathub ---
 install_flatpak() {
     echo -e "${YELLOW}  未检测到 flatpak。${RESET}"
-    read -rp "  是否安装 flatpak? [Y/n] " yn
+    read -rp "  是否安装 flatpak? [Y/n] " yn < /dev/tty
     if [[ "$yn" =~ ^[Nn] ]]; then
         echo -e "  - 跳过，Flatpak 源将不可用"
         return 1
@@ -49,7 +56,7 @@ install_flatpak() {
 setup_flathub() {
     if ! flatpak remotes 2>/dev/null | grep -q flathub; then
         echo -e "${YELLOW}  未检测到 flathub 远程。${RESET}"
-        read -rp "  是否添加 flathub? [Y/n] " yn
+        read -rp "  是否添加 flathub? [Y/n] " yn < /dev/tty
         if [[ "$yn" =~ ^[Nn] ]]; then
             echo -e "  - 跳过，Flatpak 源将不可用"
             return
@@ -62,7 +69,7 @@ setup_flathub() {
 # --- 自动安装 snap ---
 install_snap() {
     echo -e "${YELLOW}  未检测到 snap。${RESET}"
-    read -rp "  是否安装 snapd? [Y/n] " yn
+    read -rp "  是否安装 snapd? [Y/n] " yn < /dev/tty
     if [[ "$yn" =~ ^[Nn] ]]; then
         echo -e "  - 跳过，Snap 源将不可用"
         return 1
