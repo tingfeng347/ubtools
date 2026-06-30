@@ -99,7 +99,10 @@ setup_flathub() {
             return
         fi
         echo -e "  正在添加 flathub 远程..."
-        flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        if ! sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; then
+            echo -e "${YELLOW}  系统级 flathub 添加失败，尝试添加到当前用户...${RESET}"
+            flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        fi
         echo -e "  ${GREEN}✓${RESET} flathub 远程已添加"
     fi
 }
