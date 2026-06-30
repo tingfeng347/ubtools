@@ -108,9 +108,26 @@ echo ""
 
 # --- 3. 安装脚本 ---
 echo -e "${CYAN}[3/4]${RESET} 安装 ubti / ubtr 到 ${BIN_DIR}..."
+
+# 如果通过 curl | bash 运行，需要先下载脚本文件
+RAW_BASE="https://raw.githubusercontent.com/tingfeng347/ubtools/main"
+if [[ ! -f "$SCRIPT_DIR/ubti" ]] || [[ ! -f "$SCRIPT_DIR/ubtr" ]]; then
+    TMPDIR="$(mktemp -d)"
+    echo -e "  正在下载脚本..."
+    curl -fsSL "$RAW_BASE/ubti" -o "$TMPDIR/ubti"
+    curl -fsSL "$RAW_BASE/ubtr" -o "$TMPDIR/ubtr"
+    SCRIPT_DIR="$TMPDIR"
+fi
+
 sudo cp "$SCRIPT_DIR/ubti" "$BIN_DIR/ubti"
 sudo cp "$SCRIPT_DIR/ubtr" "$BIN_DIR/ubtr"
 sudo chmod +x "$BIN_DIR/ubti" "$BIN_DIR/ubtr"
+
+# 清理临时目录
+if [[ -n "${TMPDIR:-}" ]]; then
+    rm -rf "$TMPDIR"
+fi
+
 echo -e "  ${GREEN}✓${RESET} 已安装"
 
 # --- 4. 初始化缓存 ---
