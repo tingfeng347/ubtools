@@ -13,6 +13,46 @@ RESET='\033[0m'
 
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APT_UPDATED=0
+
+prompt_yes_no() {
+    local prompt="$1"
+    local yn
+
+    if [[ -r /dev/tty ]]; then
+        read -rp "$prompt" yn < /dev/tty
+    else
+        read -rp "$prompt" yn
+    fi
+
+    [[ ! "$yn" =~ ^[Nn] ]]
+}
+
+ensure_sudo() {
+    echo -e "  需要 sudo 权限安装依赖，如提示请输入当前用户密码。"
+    sudo -v
+}
+
+apt_update_once() {
+    if [[ "$APT_UPDATED" -eq 1 ]]; then
+        return
+    fi
+
+    echo -e "  正在更新 APT 索引（如果网络较慢，这一步可能需要几分钟）..."
+    sudo apt-get \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        -o Acquire::Retries=2 \
+        -o DPkg::Lock::Timeout=60 \
+        update
+    APT_UPDATED=1
+}
+
+apt_install_packages() {
+    echo -e "  正在安装: $*"
+    apt_update_once
+    sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y "$@"
+}
 
 # --- 检查是否为 Ubuntu ---
 if ! grep -qi 'ubuntu' /etc/os-release 2>/dev/null; then
@@ -29,26 +69,24 @@ echo ""
 # --- 自动安装 fzf ---
 install_fzf() {
     echo -e "${YELLOW}  未检测到 fzf，核心依赖，必须安装。${RESET}"
-    read -rp "  是否安装? [Y/n] " yn < /dev/tty
-    if [[ "$yn" =~ ^[Nn] ]]; then
+    if ! prompt_yes_no "  是否安装? [Y/n] "; then
         echo -e "${RED}  已取消，ubti/ubtr 无法运行。${RESET}"
         exit 1
     fi
-    sudo apt update -qq
-    sudo apt install -y fzf
+    ensure_sudo
+    apt_install_packages fzf
     echo -e "  ${GREEN}✓${RESET} fzf 已安装"
 }
 
 # --- 自动安装 flatpak + flathub ---
 install_flatpak() {
     echo -e "${YELLOW}  未检测到 flatpak。${RESET}"
-    read -rp "  是否安装 flatpak? [Y/n] " yn < /dev/tty
-    if [[ "$yn" =~ ^[Nn] ]]; then
+    if ! prompt_yes_no "  是否安装 flatpak? [Y/n] "; then
         echo -e "  - 跳过，Flatpak 源将不可用"
         return 1
     fi
-    sudo apt update -qq
-    sudo apt install -y flatpak
+    ensure_sudo
+    apt_install_packages flatpak
     echo -e "  ${GREEN}✓${RESET} flatpak 已安装"
     return 0
 }
@@ -56,11 +94,11 @@ install_flatpak() {
 setup_flathub() {
     if ! flatpak remotes 2>/dev/null | grep -q flathub; then
         echo -e "${YELLOW}  未检测到 flathub 远程。${RESET}"
-        read -rp "  是否添加 flathub? [Y/n] " yn < /dev/tty
-        if [[ "$yn" =~ ^[Nn] ]]; then
+        if ! prompt_yes_no "  是否添加 flathub? [Y/n] "; then
             echo -e "  - 跳过，Flatpak 源将不可用"
             return
         fi
+        echo -e "  正在添加 flathub 远程..."
         flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
         echo -e "  ${GREEN}✓${RESET} flathub 远程已添加"
     fi
@@ -69,13 +107,12 @@ setup_flathub() {
 # --- 自动安装 snap ---
 install_snap() {
     echo -e "${YELLOW}  未检测到 snap。${RESET}"
-    read -rp "  是否安装 snapd? [Y/n] " yn < /dev/tty
-    if [[ "$yn" =~ ^[Nn] ]]; then
+    if ! prompt_yes_no "  是否安装 snapd? [Y/n] "; then
         echo -e "  - 跳过，Snap 源将不可用"
         return 1
     fi
-    sudo apt update -qq
-    sudo apt install -y snapd
+    ensure_sudo
+    apt_install_packages snapd
     echo -e "  ${GREEN}✓${RESET} snap 已安装"
     return 0
 }
