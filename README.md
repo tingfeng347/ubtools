@@ -13,7 +13,7 @@ bash install.sh
 或者一键：
 
 ```bash
-curl -fsSL https://github.com/tingfeng347/ubtools/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
 ```
 
 ## 命令
