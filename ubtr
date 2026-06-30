@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# 描述： 卸载软件包TUI
+# Description: Remove pkgs TUI
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
+export SHELL=$(grep -m 1 -E '^/.*/bash$' /etc/shells || echo "/bin/bash")
+
+# --- 1. 隐藏的内部调用：用于双轨并行生成/刷新数据 ---
+if [[ "${1:-}" == "--generate-data" ]]; then
+    AWK_CMD_APT='
+        {
+            pkg = $1; ver = $2
+            printf "%s%-20s%s %-35s %s\n", cb, "apt", r, pkg, ver
+        }
+    '
+
+    AWK_CMD_SNAP='
+        {
+            if (NF < 2) next
+            name = $1; ver = $2
+            printf "%s%-20s%s %-35s %s\n", cc, "snap", r, name, ver
+        }
+    '
+
+    AWK_CMD_FLATPAK='
+        {
+            name = $1; ver = ($2 != "") ? $2 : "-"
+            printf "%s%-20s%s %-35s %s\n", cf, "flatpak", r, name, ver
+        }
+    '
+
+    dpkg-query -W -f '${binary:Package}\t${Version}\n' 2>/dev/null | \
+    awk -v cb='\033[34m' -v r='\033[0m' "$AWK_CMD_APT"
+
+    if command -v snap >/dev/null 2>&1; then
+        snap list 2>/dev/null | tail -n +2 | \
+        awk -v cc='\033[35m' -v r='\033[0m' "$AWK_CMD_SNAP" || true
+    fi
+    if command -v flatpak >/dev/null 2>&1; then
+        flatpak list --app --columns=application,version 2>/dev/null | \
+        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_CMD_FLATPAK" || true
+    fi
+    exit 0
+fi
+
+# --- 2. 环境与多语言字典配置 ---
+ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
+SHOW_HELP=false
+QUERY_ARGS=()
+
+declare -A MSG
+if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
+    MSG[DESC]="统一模糊搜索并卸载系统软件包 (支持 APT / Snap / Flatpak)。"
+    MSG[OPTS]="选项："
+    MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
+    MSG[FEAT]="功能特性："
+    MSG[FEAT_1]="- 大一统架构：同屏混合显示并多选 APT / Snap / Flatpak 应用"
+    MSG[FEAT_2]="- 彻底与安全：apt purge 彻底清除配置，snap remove 原生安全，flatpak uninstall 快捷卸载"
+    MSG[FEAT_3]="- 视觉标识：蓝色(APT) | 紫色(Snap) | 青色(Flatpak)"
+    MSG[EX]="示例："
+    MSG[ERR_FZF]="错误：未找到 fzf，请先安装 (sudo apt install fzf)。"
+    MSG[REMOVING_APT]=">> 准备卸载 (APT)："
+    MSG[REMOVING_SNAP]=">> 准备卸载 (Snap)："
+    MSG[REMOVING_FLATPAK]=">> 准备卸载 (Flatpak)："
+    MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Esc:退出"
+else
+    MSG[DESC]="Unified fuzzy search & remove for system packages (APT / Snap / Flatpak)."
+    MSG[OPTS]="Options:"
+    MSG[OPT_HELP]="  --help, -h    Show this help and exit"
+    MSG[FEAT]="Features:"
+    MSG[FEAT_1]="- Unified UI: Mix, multi-select and remove APT / Snap / Flatpak apps together"
+    MSG[FEAT_2]="- Safe & Clean: apt purge removes configs, snap remove native protection, flatpak uninstall quick removal"
+    MSG[FEAT_3]="- Visuals: Blue(APT) | Purple(Snap) | Cyan(Flatpak)"
+    MSG[EX]="Example:"
+    MSG[ERR_FZF]="Error: fzf not found. Install: sudo apt install fzf"
+    MSG[REMOVING_APT]=">> Preparing to remove (APT):"
+    MSG[REMOVING_SNAP]=">> Preparing to remove (Snap):"
+    MSG[REMOVING_FLATPAK]=">> Preparing to remove (Flatpak):"
+    MSG[HEADER]="Tab:Multi-Select | Enter:Remove | Ctrl+R:Reload | Esc:Exit"
+fi
+
+# --- 3. 参数解析 ---
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h) SHOW_HELP=true; shift ;;
+        *) QUERY_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# --- 4. 核心依赖检查 ---
+command -v fzf >/dev/null 2>&1 || { echo "${MSG[ERR_FZF]}" >&2; exit 1; }
+
+HAS_SNAP=false
+if command -v snap >/dev/null 2>&1; then
+    HAS_SNAP=true
+fi
+
+HAS_FLATPAK=false
+if command -v flatpak >/dev/null 2>&1; then
+    HAS_FLATPAK=true
+fi
+
+# --- 5. 帮助信息拦截 ---
+if [ "$SHOW_HELP" = true ]; then
+    cat <<EOF
+Usage: ${0##*/} [options] [query]
+
+${MSG[OPTS]}
+${MSG[OPT_HELP]}
+
+Description:
+  ${MSG[DESC]}
+
+${MSG[FEAT]}
+  ${MSG[FEAT_1]}
+  ${MSG[FEAT_2]}
+  ${MSG[FEAT_3]}
+
+${MSG[EX]}
+  ${0##*/} firefox        # search and remove across APT/Snap/Flatpak
+  ${0##*/}                # list all installed packages
+EOF
+    exit 0
+fi
+
+# --- 6. 文件安全设置 ---
+TMP_DIR=$(mktemp -d -t unified_ubtr.XXXXXX)
+TARGET_FILE="${TMP_DIR}/target"
+
+cleanup() { rm -rf "$TMP_DIR"; }
+trap cleanup EXIT INT TERM
+
+# --- 7. 交互式 FZF 渲染与智能预览 ---
+PREVIEW_CMD="
+line={}
+src=\$(echo \"\$line\" | awk '{print \$1}' | sed \$'s/\\\\033\\\\[[0-9;]*[a-zA-Z]//g')
+pkg=\$(echo \"\$line\" | awk '{print \$2}')
+if [[ \"\$src\" == snap ]]; then
+    snap info \"\$pkg\" 2>/dev/null
+elif [[ \"\$src\" == flatpak ]]; then
+    flatpak info \"\$pkg\" 2>/dev/null
+else
+    apt-cache show \"\$pkg\" 2>/dev/null
+fi
+"
+
+COLOR_BLUE=$'\033[34m'
+COLOR_SNAP=$'\033[35m'
+COLOR_FLATPAK=$'\033[36m'
+COLOR_RESET=$'\033[0m'
+FZF_HEADER="${MSG[HEADER]} | ${COLOR_BLUE}APT${COLOR_RESET}"
+if [ "$HAS_SNAP" = true ]; then
+    FZF_HEADER+=" & ${COLOR_SNAP}Snap${COLOR_RESET}"
+fi
+if [ "$HAS_FLATPAK" = true ]; then
+    FZF_HEADER+=" & ${COLOR_FLATPAK}Flatpak${COLOR_RESET}"
+fi
+
+set +e
+fzf --multi --ansi \
+    --preview "$PREVIEW_CMD" \
+    --preview-window=down:55%:wrap \
+    --height=95% --layout=reverse --border \
+    --bind "alt-j:last,alt-k:first" \
+    --bind "ctrl-r:reload(\"$SCRIPT_PATH\" --generate-data)" \
+    --tiebreak=index \
+    --header "$FZF_HEADER" \
+    --query "${QUERY_ARGS[*]:-}" \
+    < <("$SCRIPT_PATH" --generate-data) \
+    > "$TARGET_FILE"
+FZF_EXIT=$?
+set -e
+
+# --- 8. 执行卸载逻辑 (分发处理) ---
+if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
+    mapfile -t SELECTED_LINES < "$TARGET_FILE"
+    APT_PKGS=()
+    SNAP_PKGS=()
+    FLATPAK_PKGS=()
+
+    for line in "${SELECTED_LINES[@]}"; do
+        src=$(echo "$line" | awk '{print $1}' | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
+        pkg=$(echo "$line" | awk '{print $2}')
+        [[ -z "$src" || -z "$pkg" ]] && continue
+        if [[ "$src" == "snap" ]]; then
+            SNAP_PKGS+=("$pkg")
+        elif [[ "$src" == "flatpak" ]]; then
+            FLATPAK_PKGS+=("$pkg")
+        else
+            APT_PKGS+=("$pkg")
+        fi
+    done
+
+    if [[ ${#APT_PKGS[@]} -gt 0 ]]; then
+        echo -e "\n\033[34m${MSG[REMOVING_APT]}\033[0m"
+        echo "${APT_PKGS[*]}"
+        echo "----------------------------------------"
+        sudo apt purge "${APT_PKGS[@]}"
+    fi
+
+    if [[ ${#SNAP_PKGS[@]} -gt 0 ]]; then
+        echo -e "\n\033[35m${MSG[REMOVING_SNAP]}\033[0m"
+        echo "${SNAP_PKGS[*]}"
+        echo "----------------------------------------"
+        sudo snap remove "${SNAP_PKGS[@]}"
+    fi
+
+    if [[ ${#FLATPAK_PKGS[@]} -gt 0 ]]; then
+        echo -e "\n\033[36m${MSG[REMOVING_FLATPAK]}\033[0m"
+        echo "${FLATPAK_PKGS[*]}"
+        echo "----------------------------------------"
+        flatpak uninstall -y "${FLATPAK_PKGS[@]}"
+    fi
+fi
