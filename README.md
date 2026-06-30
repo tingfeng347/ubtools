@@ -5,7 +5,7 @@ Ubuntu 包管理 TUI 工具集，统一 APT / Snap / Flatpak 三个源。
 ## 安装
 
 ```bash
-git clone https://github.com/<your>/ubtools.git
+git clone https://github.com/tingfeng347/ubtools.git
 cd ubtools
 bash install.sh
 ```
@@ -13,7 +13,7 @@ bash install.sh
 或者一键：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<your>/ubtools/main/install.sh | bash
+curl -fsSL https://github.com/tingfeng347/ubtools/main/install.sh | bash
 ```
 
 ## 命令
