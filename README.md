@@ -16,6 +16,18 @@ bash install.sh
 curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
 ```
 
+## 卸载
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash
+```
+
+或者在源码目录运行：
+
+```bash
+bash uninstall.sh
+```
+
 ## 命令
 
 | 命令 | 用途 | 源 |

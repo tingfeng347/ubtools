@@ -39,7 +39,9 @@ if [[ "${1:-}" == "--generate-data" ]]; then
         awk -v cc='\033[35m' -v r='\033[0m' "$AWK_CMD_SNAP" || true
     fi
     if command -v flatpak >/dev/null 2>&1; then
-        flatpak list --app --columns=application,version 2>/dev/null | \
+        flatpak list --user --app --columns=application,version 2>/dev/null | \
+        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_CMD_FLATPAK" || true
+        flatpak list --system --app --columns=application,version 2>/dev/null | \
         awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_CMD_FLATPAK" || true
     fi
     exit 0
@@ -140,7 +142,7 @@ pkg=\$(echo \"\$line\" | awk '{print \$2}')
 if [[ \"\$src\" == snap ]]; then
     snap info \"\$pkg\" 2>/dev/null
 elif [[ \"\$src\" == flatpak ]]; then
-    flatpak info \"\$pkg\" 2>/dev/null
+    flatpak info --user \"\$pkg\" 2>/dev/null || flatpak info --system \"\$pkg\" 2>/dev/null
 else
     apt-cache show \"\$pkg\" 2>/dev/null
 fi
@@ -211,6 +213,8 @@ if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
         echo -e "\n\033[36m${MSG[REMOVING_FLATPAK]}\033[0m"
         echo "${FLATPAK_PKGS[*]}"
         echo "----------------------------------------"
-        flatpak uninstall -y "${FLATPAK_PKGS[@]}"
+        if ! flatpak uninstall --user -y "${FLATPAK_PKGS[@]}"; then
+            sudo flatpak uninstall --system -y "${FLATPAK_PKGS[@]}"
+        fi
     fi
 fi

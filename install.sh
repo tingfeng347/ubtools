@@ -92,29 +92,20 @@ install_flatpak() {
 }
 
 setup_flathub() {
-    if ! flatpak remotes 2>/dev/null | grep -q flathub; then
+    if ! flatpak remotes --user 2>/dev/null | grep -q flathub; then
         echo -e "${YELLOW}  未检测到 flathub 远程。${RESET}"
         if ! prompt_yes_no "  是否添加 flathub? [Y/n] "; then
             echo -e "  - 跳过，Flatpak 源将不可用"
             return
         fi
-        ensure_sudo
-        echo -e "  正在添加 flathub 远程（网络不可达时最多等待 45 秒）..."
-        if timeout 45s sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; then
+        echo -e "  正在为当前用户添加 flathub 远程（网络不可达时最多等待 45 秒）..."
+        if timeout 45s flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; then
             echo -e "  ${GREEN}✓${RESET} flathub 远程已添加"
             return
         fi
 
-        if [[ "${UBTOOLS_FLATHUB_USER_FALLBACK:-1}" == "1" ]]; then
-            echo -e "${YELLOW}  系统级 flathub 添加失败，尝试添加到当前用户...${RESET}"
-            if timeout 45s flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; then
-                echo -e "  ${GREEN}✓${RESET} flathub 远程已添加"
-                return
-            fi
-        fi
-
         echo -e "${YELLOW}  flathub 添加失败或超时，已跳过。APT/Snap 功能仍可正常使用。${RESET}"
-        echo -e "  可稍后手动执行：sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
+        echo -e "  可稍后手动执行：flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
     fi
 }
 
