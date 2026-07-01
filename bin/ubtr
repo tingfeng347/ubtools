@@ -12,7 +12,7 @@ if [[ "${1:-}" == "--generate-data" ]]; then
     AWK_CMD_APT='
         {
             pkg = $1; ver = $2
-            printf "%s%-20s%s %-35s %s\n", cb, "apt", r, pkg, ver
+            printf "%s%-18s%s %-42s %-22s\t%s\t%s\n", cb, "apt", r, ellipsize(pkg, 42), ellipsize(ver, 22), "apt", pkg
         }
     '
 
@@ -20,29 +20,34 @@ if [[ "${1:-}" == "--generate-data" ]]; then
         {
             if (NF < 2) next
             name = $1; ver = $2
-            printf "%s%-20s%s %-35s %s\n", cc, "snap", r, name, ver
+            printf "%s%-18s%s %-42s %-22s\t%s\t%s\n", cc, "snap", r, ellipsize(name, 42), ellipsize(ver, 22), "snap", name
         }
     '
 
     AWK_CMD_FLATPAK='
         {
             name = $1; ver = ($2 != "") ? $2 : "-"
-            printf "%s%-20s%s %-35s %s\n", cf, "flatpak", r, name, ver
+            printf "%s%-18s%s %-42s %-22s\t%s\t%s\n", cf, "flatpak", r, ellipsize(name, 42), ellipsize(ver, 22), "flatpak", name
+        }
+    '
+    AWK_HELPERS='
+        function ellipsize(s, n) {
+            return (length(s) > n) ? substr(s, 1, n - 1) "~" : s
         }
     '
 
     dpkg-query -W -f '${binary:Package}\t${Version}\n' 2>/dev/null | \
-    awk -v cb='\033[34m' -v r='\033[0m' "$AWK_CMD_APT"
+    awk -v cb='\033[34m' -v r='\033[0m' "$AWK_HELPERS $AWK_CMD_APT"
 
     if command -v snap >/dev/null 2>&1; then
         snap list 2>/dev/null | tail -n +2 | \
-        awk -v cc='\033[35m' -v r='\033[0m' "$AWK_CMD_SNAP" || true
+        awk -v cc='\033[35m' -v r='\033[0m' "$AWK_HELPERS $AWK_CMD_SNAP" || true
     fi
     if command -v flatpak >/dev/null 2>&1; then
         flatpak list --user --app --columns=application,version 2>/dev/null | \
-        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_CMD_FLATPAK" || true
+        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_HELPERS $AWK_CMD_FLATPAK" || true
         flatpak list --system --app --columns=application,version 2>/dev/null | \
-        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_CMD_FLATPAK" || true
+        awk -F'\t' -v cf='\033[36m' -v r='\033[0m' "$AWK_HELPERS $AWK_CMD_FLATPAK" || true
     fi
     exit 0
 fi
@@ -68,7 +73,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[REMOVING_APT]=">> 准备卸载 (APT)："
     MSG[REMOVING_SNAP]=">> 准备卸载 (Snap)："
     MSG[REMOVING_FLATPAK]=">> 准备卸载 (Flatpak)："
-    MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Esc:退出"
+    MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
 else
     MSG[DESC]="Unified fuzzy search & remove for system packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
@@ -83,7 +88,7 @@ else
     MSG[REMOVING_APT]=">> Preparing to remove (APT):"
     MSG[REMOVING_SNAP]=">> Preparing to remove (Snap):"
     MSG[REMOVING_FLATPAK]=">> Preparing to remove (Flatpak):"
-    MSG[HEADER]="Tab:Multi-Select | Enter:Remove | Ctrl+R:Reload | Esc:Exit"
+    MSG[HEADER]="Tab:Multi-Select | Enter:Remove | Ctrl+R:Reload | Ctrl+E:Exact/Fuzzy | Esc:Exit"
 fi
 
 # --- 3. 参数解析 ---
@@ -142,8 +147,8 @@ trap cleanup EXIT INT TERM
 # --- 7. 交互式 FZF 渲染与智能预览 ---
 PREVIEW_CMD="
 line={}
-src=\$(echo \"\$line\" | awk '{print \$1}' | sed \$'s/\\\\033\\\\[[0-9;]*[a-zA-Z]//g')
-pkg=\$(echo \"\$line\" | awk '{print \$2}')
+src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}')
+pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}')
 if [[ \"\$src\" == snap ]]; then
     snap info \"\$pkg\" 2>/dev/null
 elif [[ \"\$src\" == flatpak ]]; then
@@ -172,10 +177,13 @@ fi
 set +e
 fzf --multi --ansi \
     "${FZF_MATCH_OPTIONS[@]}" \
+    --delimiter=$'\t' \
+    --with-nth=1 \
     --preview "$PREVIEW_CMD" \
     --preview-window=down:55%:wrap \
     --height=95% --layout=reverse --border \
     --bind "alt-j:last,alt-k:first" \
+    --bind "ctrl-e:toggle-exact" \
     --bind "ctrl-r:reload(\"$SCRIPT_PATH\" --generate-data)" \
     --tiebreak=index \
     --header "$FZF_HEADER" \
@@ -193,8 +201,8 @@ if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
     FLATPAK_PKGS=()
 
     for line in "${SELECTED_LINES[@]}"; do
-        src=$(echo "$line" | awk '{print $1}' | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
-        pkg=$(echo "$line" | awk '{print $2}')
+        src=$(printf '%s\n' "$line" | awk -F'\t' '{print $2}')
+        pkg=$(printf '%s\n' "$line" | awk -F'\t' '{print $3}')
         [[ -z "$src" || -z "$pkg" ]] && continue
         if [[ "$src" == "snap" ]]; then
             SNAP_PKGS+=("$pkg")

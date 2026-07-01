@@ -20,12 +20,16 @@ if [[ "${1:-}" == "--generate-list" ]]; then
     CACHE_TIME=3600
 
     AWK_CMD='
+        function ellipsize(s, n) {
+            return (length(s) > n) ? substr(s, 1, n - 1) "~" : s
+        }
         FNR==NR { installed[$1]=1; next }
         {
             status = ($2 in installed) ? ci " ✔ " label r : ""
-            printf "%s%s%s", c, $1, r
-            for(i=length($1); i<20; i++) printf " "
-            printf "%-35s %-28s %s\n", $2, $3, status
+            src = ellipsize($1, 18)
+            pkg = ellipsize($2, 42)
+            ver = ellipsize($3, 22)
+            printf "%s%-18s%s %-42s %-22s %s\t%s\t%s\n", c, src, r, pkg, ver, status, $1, $2
         }
     '
 
@@ -158,7 +162,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[ERR_FZF]="错误：未找到 fzf，请先安装 (sudo apt install fzf)。"
     MSG[INSTALLED]="[已安装]"
     MSG[INSTALLING]=">> 准备安装："
-    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Esc:退出"
+    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
     MSG[EXEC]="> 正在执行: "
     MSG[HINT]="如需重试或记录，可复制以下命令："
 else
@@ -176,7 +180,7 @@ else
     MSG[ERR_FZF]="Error: fzf not found. Install: sudo apt install fzf"
     MSG[INSTALLED]="[Installed]"
     MSG[INSTALLING]=">> Installing:"
-    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Esc:Exit"
+    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Ctrl+E:Exact/Fuzzy | Esc:Exit"
     MSG[EXEC]="> Executing: "
     MSG[HINT]="For retry or logging, copy the command below:"
 fi
@@ -222,7 +226,7 @@ SNAP_CACHE="${CACHE_DIR}/snap_packages.txt"
 FLATPAK_CACHE="${CACHE_DIR}/flatpak_packages.txt"
 mkfifo "$PIPE_FIFO"
 
-PREVIEW_CMD="export LC_ALL=\"$ORIGINAL_LANG\"; src=\$(echo {1} | sed \$'s/\\\\033\\\\[[0-9;]*[a-zA-Z]//g'); pkg=\$(echo {2} | sed \$'s/\\\\033\\\\[[0-9;]*[a-zA-Z]//g'); if [[ \"\$src\" == snap ]]; then snap info \"\$pkg\" 2>/dev/null; elif [[ \"\$src\" == flatpak ]]; then flatpak remote-info --user flathub \"\$pkg\" 2>/dev/null || flatpak remote-info --system flathub \"\$pkg\" 2>/dev/null; else apt-cache show \"\$pkg\" 2>/dev/null | head -60; fi"
+PREVIEW_CMD="export LC_ALL=\"$ORIGINAL_LANG\"; line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); if [[ \"\$src\" == snap ]]; then snap info \"\$pkg\" 2>/dev/null; elif [[ \"\$src\" == flatpak ]]; then flatpak remote-info --user flathub \"\$pkg\" 2>/dev/null || flatpak remote-info --system flathub \"\$pkg\" 2>/dev/null; else apt-cache show \"\$pkg\" 2>/dev/null | head -60; fi"
 
 cleanup() {
     if [[ -n "${PID_GEN:-}" ]]; then kill "$PID_GEN" 2>/dev/null || true; fi
@@ -261,10 +265,13 @@ RELOAD_CMD=$(printf "%q " "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" 
 set +e
 fzf --multi --ansi \
     "${FZF_MATCH_OPTIONS[@]}" \
+    --delimiter=$'\t' \
+    --with-nth=1 \
     --preview "$PREVIEW_CMD" \
     --preview-window=down:55%:wrap \
     --height=95% --layout=reverse --border \
     --bind "alt-j:last,alt-k:first" \
+    --bind "ctrl-e:toggle-exact" \
     --bind "ctrl-r:reload(${RELOAD_CMD})" \
     --tiebreak=index \
     --header "$FZF_HEADER" \
@@ -282,9 +289,8 @@ if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
     FLATPAK_PACKAGES=()
 
     for line in "${SELECTED_LINES[@]}"; do
-        clean=$(echo "$line" | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
-        src=$(echo "$clean" | awk '{print $1}')
-        pkg=$(echo "$clean" | awk '{print $2}')
+        src=$(printf '%s\n' "$line" | awk -F'\t' '{print $2}')
+        pkg=$(printf '%s\n' "$line" | awk -F'\t' '{print $3}')
         [[ -z "$src" || -z "$pkg" ]] && continue
         if [[ "$src" == "snap" ]]; then
             SNAP_PACKAGES+=("$pkg")
