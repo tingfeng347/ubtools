@@ -107,6 +107,7 @@ fi
 # --- 1. 环境与基础配置 ---
 SHOW_HELP=false
 FORCE_REFRESH=false
+FZF_EXACT=false
 SHOW_APT=true
 SHOW_SNAP=true
 SHOW_FLATPAK=true
@@ -118,6 +119,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) SHOW_HELP=true; shift ;;
         --refresh|-y) FORCE_REFRESH=true; shift ;;
+        --exact|-e) FZF_EXACT=true; shift ;;
         --apt)
             if [[ "$SOURCE_SPECIFIED" == false ]]; then
                 SHOW_APT=false; SHOW_SNAP=false; SHOW_FLATPAK=false; SOURCE_SPECIFIED=true
@@ -146,6 +148,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[OPTS]="选项："
     MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
     MSG[OPT_REFRESH]="  --refresh, -y 强制刷新 Snap 软件包本地缓存列表"
+    MSG[OPT_EXACT]="  --exact, -e   关闭模糊匹配，使用精确匹配模式"
     MSG[OPT_SOURCES]="  --apt, --snap, --flatpak  选择数据源（可组合，默认全部展示）"
     MSG[FEAT]="功能特性："
     MSG[FEAT_1]="- 三源合一：APT (蓝) | Snap (紫) | Flatpak (青)"
@@ -163,6 +166,7 @@ else
     MSG[OPTS]="Options:"
     MSG[OPT_HELP]="  --help, -h    Show this help and exit"
     MSG[OPT_REFRESH]="  --refresh, -y Force refresh Snap package cache list"
+    MSG[OPT_EXACT]="  --exact, -e   Disable fuzzy matching and use exact matching mode"
     MSG[OPT_SOURCES]="  --apt, --snap, --flatpak  Select data sources (combinable, default: all)"
     MSG[FEAT]="Features:"
     MSG[FEAT_1]="- Triple source: APT (Blue) | Snap (Purple) | Flatpak (Cyan)"
@@ -185,6 +189,7 @@ Usage: ${0##*/} [options] [query]
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
 ${MSG[OPT_REFRESH]}
+${MSG[OPT_EXACT]}
 ${MSG[OPT_SOURCES]}
 
 Description:
@@ -236,6 +241,10 @@ COLOR_BLUE=$'\033[34m'
 COLOR_PURPLE=$'\033[35m'
 COLOR_CYAN=$'\033[36m'
 COLOR_RESET=$'\033[0m'
+FZF_MATCH_OPTIONS=()
+if [[ "$FZF_EXACT" == true ]]; then
+    FZF_MATCH_OPTIONS+=(--exact)
+fi
 FZF_HEADER="${MSG[HEADER]}"
 if [[ "$SHOW_APT" == true ]]; then
     FZF_HEADER+=" | ${COLOR_BLUE}APT${COLOR_RESET}"
@@ -251,6 +260,7 @@ RELOAD_CMD=$(printf "%q " "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" 
 
 set +e
 fzf --multi --ansi \
+    "${FZF_MATCH_OPTIONS[@]}" \
     --preview "$PREVIEW_CMD" \
     --preview-window=down:55%:wrap \
     --height=95% --layout=reverse --border \

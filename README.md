@@ -42,10 +42,12 @@ ubti                  # 打开 TUI，搜索所有源
 ubti firefox          # 搜索 firefox
 ubti --flatpak        # 只看 Flatpak 源
 ubti --apt --snap     # APT + Snap
+ubti --exact firefox  # 关闭模糊匹配，适合长包名
 ubti -y               # 强制刷新缓存
 
 ubtr                  # 打开 TUI，卸载已安装包
 ubtr firefox          # 搜索并卸载 firefox
+ubtr -e firefox       # 关闭模糊匹配
 ```
 
 ## 热键

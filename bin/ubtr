@@ -50,6 +50,7 @@ fi
 # --- 2. 环境与多语言字典配置 ---
 ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
 SHOW_HELP=false
+FZF_EXACT=false
 QUERY_ARGS=()
 
 declare -A MSG
@@ -57,6 +58,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[DESC]="统一模糊搜索并卸载系统软件包 (支持 APT / Snap / Flatpak)。"
     MSG[OPTS]="选项："
     MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
+    MSG[OPT_EXACT]="  --exact, -e   关闭模糊匹配，使用精确匹配模式"
     MSG[FEAT]="功能特性："
     MSG[FEAT_1]="- 大一统架构：同屏混合显示并多选 APT / Snap / Flatpak 应用"
     MSG[FEAT_2]="- 彻底与安全：apt purge 彻底清除配置，snap remove 原生安全，flatpak uninstall 快捷卸载"
@@ -71,6 +73,7 @@ else
     MSG[DESC]="Unified fuzzy search & remove for system packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
     MSG[OPT_HELP]="  --help, -h    Show this help and exit"
+    MSG[OPT_EXACT]="  --exact, -e   Disable fuzzy matching and use exact matching mode"
     MSG[FEAT]="Features:"
     MSG[FEAT_1]="- Unified UI: Mix, multi-select and remove APT / Snap / Flatpak apps together"
     MSG[FEAT_2]="- Safe & Clean: apt purge removes configs, snap remove native protection, flatpak uninstall quick removal"
@@ -87,6 +90,7 @@ fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) SHOW_HELP=true; shift ;;
+        --exact|-e) FZF_EXACT=true; shift ;;
         *) QUERY_ARGS+=("$1"); shift ;;
     esac
 done
@@ -111,6 +115,7 @@ Usage: ${0##*/} [options] [query]
 
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
+${MSG[OPT_EXACT]}
 
 Description:
   ${MSG[DESC]}
@@ -152,6 +157,10 @@ COLOR_BLUE=$'\033[34m'
 COLOR_SNAP=$'\033[35m'
 COLOR_FLATPAK=$'\033[36m'
 COLOR_RESET=$'\033[0m'
+FZF_MATCH_OPTIONS=()
+if [[ "$FZF_EXACT" == true ]]; then
+    FZF_MATCH_OPTIONS+=(--exact)
+fi
 FZF_HEADER="${MSG[HEADER]} | ${COLOR_BLUE}APT${COLOR_RESET}"
 if [ "$HAS_SNAP" = true ]; then
     FZF_HEADER+=" & ${COLOR_SNAP}Snap${COLOR_RESET}"
@@ -162,6 +171,7 @@ fi
 
 set +e
 fzf --multi --ansi \
+    "${FZF_MATCH_OPTIONS[@]}" \
     --preview "$PREVIEW_CMD" \
     --preview-window=down:55%:wrap \
     --height=95% --layout=reverse --border \
