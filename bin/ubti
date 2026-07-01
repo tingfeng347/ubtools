@@ -162,7 +162,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[ERR_FZF]="错误：未找到 fzf，请先安装 (sudo apt install fzf)。"
     MSG[INSTALLED]="[已安装]"
     MSG[INSTALLING]=">> 准备安装："
-    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Alt+E:精确/模糊 | Esc:退出"
+    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
     MSG[EXEC]="> 正在执行: "
     MSG[HINT]="如需重试或记录，可复制以下命令："
 else
@@ -180,7 +180,7 @@ else
     MSG[ERR_FZF]="Error: fzf not found. Install: sudo apt install fzf"
     MSG[INSTALLED]="[Installed]"
     MSG[INSTALLING]=">> Installing:"
-    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Alt+E:Exact/Fuzzy | Esc:Exit"
+    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Ctrl+E:Exact/Fuzzy | Esc:Exit"
     MSG[EXEC]="> Executing: "
     MSG[HINT]="For retry or logging, copy the command below:"
 fi
@@ -253,7 +253,6 @@ if [[ "$SHOW_FLATPAK" == true ]]; then
     FZF_HEADER+=" | ${COLOR_CYAN}Flatpak${COLOR_RESET}"
 fi
 
-RELOAD_CMD=$(printf "%q " "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK"); RELOAD_CMD="${RELOAD_CMD% }"
 QUERY_TEXT="${QUERY_ARGS[*]:-}"
 
 while true; do
@@ -270,13 +269,12 @@ while true; do
         "${FZF_MATCH_OPTIONS[@]}" \
         --delimiter=$'\t' \
         --with-nth=1 \
-        --expect=alt-e \
+        --expect=ctrl-e,ctrl-r \
         --print-query \
         --preview "$PREVIEW_CMD" \
         --preview-window=down:55%:wrap \
         --height=95% --layout=reverse --border \
         --bind "alt-j:last,alt-k:first" \
-        --bind "ctrl-r:reload(${RELOAD_CMD})" \
         --tiebreak=index \
         --header "$CURRENT_HEADER" \
         --query "$QUERY_TEXT" \
@@ -289,11 +287,12 @@ while true; do
     if [[ -s "$TARGET_FILE" ]]; then
         FZF_LINE1="$(sed -n '1p' "$TARGET_FILE")"
         FZF_LINE2="$(sed -n '2p' "$TARGET_FILE")"
-        if [[ "$FZF_LINE1" == "alt-e" || "$FZF_LINE2" == "alt-e" ]]; then
-            FZF_KEY="alt-e"
-            if [[ "$FZF_LINE1" == "alt-e" ]]; then
+        if [[ "$FZF_LINE1" == "ctrl-e" || "$FZF_LINE1" == "ctrl-r" || "$FZF_LINE2" == "ctrl-e" || "$FZF_LINE2" == "ctrl-r" ]]; then
+            if [[ "$FZF_LINE1" == "ctrl-e" || "$FZF_LINE1" == "ctrl-r" ]]; then
+                FZF_KEY="$FZF_LINE1"
                 QUERY_TEXT="$FZF_LINE2"
             else
+                FZF_KEY="$FZF_LINE2"
                 QUERY_TEXT="$FZF_LINE1"
             fi
         else
@@ -301,12 +300,17 @@ while true; do
         fi
     fi
 
-    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "alt-e" ]]; then
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
         if [[ "$FZF_EXACT" == true ]]; then
             FZF_EXACT=false
         else
             FZF_EXACT=true
         fi
+        continue
+    fi
+
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-r" ]]; then
+        "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" > "$LIST_FILE" 2>/dev/null
         continue
     fi
 

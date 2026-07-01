@@ -73,7 +73,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[REMOVING_APT]=">> 准备卸载 (APT)："
     MSG[REMOVING_SNAP]=">> 准备卸载 (Snap)："
     MSG[REMOVING_FLATPAK]=">> 准备卸载 (Flatpak)："
-    MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Alt+E:精确/模糊 | Esc:退出"
+    MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
 else
     MSG[DESC]="Unified fuzzy search & remove for system packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
@@ -88,7 +88,7 @@ else
     MSG[REMOVING_APT]=">> Preparing to remove (APT):"
     MSG[REMOVING_SNAP]=">> Preparing to remove (Snap):"
     MSG[REMOVING_FLATPAK]=">> Preparing to remove (Flatpak):"
-    MSG[HEADER]="Tab:Multi-Select | Enter:Remove | Ctrl+R:Reload | Alt+E:Exact/Fuzzy | Esc:Exit"
+    MSG[HEADER]="Tab:Multi-Select | Enter:Remove | Ctrl+R:Reload | Ctrl+E:Exact/Fuzzy | Esc:Exit"
 fi
 
 # --- 3. 参数解析 ---
@@ -189,13 +189,12 @@ while true; do
         "${FZF_MATCH_OPTIONS[@]}" \
         --delimiter=$'\t' \
         --with-nth=1 \
-        --expect=alt-e \
+        --expect=ctrl-e,ctrl-r \
         --print-query \
         --preview "$PREVIEW_CMD" \
         --preview-window=down:55%:wrap \
         --height=95% --layout=reverse --border \
         --bind "alt-j:last,alt-k:first" \
-        --bind "ctrl-r:reload(\"$SCRIPT_PATH\" --generate-data)" \
         --tiebreak=index \
         --header "$CURRENT_HEADER" \
         --query "$QUERY_TEXT" \
@@ -208,11 +207,12 @@ while true; do
     if [[ -s "$TARGET_FILE" ]]; then
         FZF_LINE1="$(sed -n '1p' "$TARGET_FILE")"
         FZF_LINE2="$(sed -n '2p' "$TARGET_FILE")"
-        if [[ "$FZF_LINE1" == "alt-e" || "$FZF_LINE2" == "alt-e" ]]; then
-            FZF_KEY="alt-e"
-            if [[ "$FZF_LINE1" == "alt-e" ]]; then
+        if [[ "$FZF_LINE1" == "ctrl-e" || "$FZF_LINE1" == "ctrl-r" || "$FZF_LINE2" == "ctrl-e" || "$FZF_LINE2" == "ctrl-r" ]]; then
+            if [[ "$FZF_LINE1" == "ctrl-e" || "$FZF_LINE1" == "ctrl-r" ]]; then
+                FZF_KEY="$FZF_LINE1"
                 QUERY_TEXT="$FZF_LINE2"
             else
+                FZF_KEY="$FZF_LINE2"
                 QUERY_TEXT="$FZF_LINE1"
             fi
         else
@@ -220,12 +220,17 @@ while true; do
         fi
     fi
 
-    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "alt-e" ]]; then
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
         if [[ "$FZF_EXACT" == true ]]; then
             FZF_EXACT=false
         else
             FZF_EXACT=true
         fi
+        continue
+    fi
+
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-r" ]]; then
+        "$SCRIPT_PATH" --generate-data > "$LIST_FILE"
         continue
     fi
 
