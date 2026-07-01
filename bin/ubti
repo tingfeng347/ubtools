@@ -162,7 +162,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[ERR_FZF]="错误：未找到 fzf，请先安装 (sudo apt install fzf)。"
     MSG[INSTALLED]="[已安装]"
     MSG[INSTALLING]=">> 准备安装："
-    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
+    MSG[HEADER]="Tab:多选 | Enter:安装 | Ctrl+R:刷新 | Alt+E:精确/模糊 | Esc:退出"
     MSG[EXEC]="> 正在执行: "
     MSG[HINT]="如需重试或记录，可复制以下命令："
 else
@@ -180,7 +180,7 @@ else
     MSG[ERR_FZF]="Error: fzf not found. Install: sudo apt install fzf"
     MSG[INSTALLED]="[Installed]"
     MSG[INSTALLING]=">> Installing:"
-    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Ctrl+E:Exact/Fuzzy | Esc:Exit"
+    MSG[HEADER]="Tab:Multi | Enter:Install | Ctrl+R:Refresh | Alt+E:Exact/Fuzzy | Esc:Exit"
     MSG[EXEC]="> Executing: "
     MSG[HINT]="For retry or logging, copy the command below:"
 fi
@@ -270,7 +270,7 @@ while true; do
         "${FZF_MATCH_OPTIONS[@]}" \
         --delimiter=$'\t' \
         --with-nth=1 \
-        --expect=ctrl-e \
+        --expect=alt-e \
         --print-query \
         --preview "$PREVIEW_CMD" \
         --preview-window=down:55%:wrap \
@@ -291,7 +291,7 @@ while true; do
         QUERY_TEXT="$(sed -n '2p' "$TARGET_FILE")"
     fi
 
-    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "alt-e" ]]; then
         if [[ "$FZF_EXACT" == true ]]; then
             FZF_EXACT=false
         else
