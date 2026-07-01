@@ -287,8 +287,18 @@ while true; do
 
     FZF_KEY=""
     if [[ -s "$TARGET_FILE" ]]; then
-        FZF_KEY="$(sed -n '1p' "$TARGET_FILE")"
-        QUERY_TEXT="$(sed -n '2p' "$TARGET_FILE")"
+        FZF_LINE1="$(sed -n '1p' "$TARGET_FILE")"
+        FZF_LINE2="$(sed -n '2p' "$TARGET_FILE")"
+        if [[ "$FZF_LINE1" == "alt-e" || "$FZF_LINE2" == "alt-e" ]]; then
+            FZF_KEY="alt-e"
+            if [[ "$FZF_LINE1" == "alt-e" ]]; then
+                QUERY_TEXT="$FZF_LINE2"
+            else
+                QUERY_TEXT="$FZF_LINE1"
+            fi
+        else
+            QUERY_TEXT="$FZF_LINE1"
+        fi
     fi
 
     if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "alt-e" ]]; then
@@ -305,7 +315,7 @@ done
 
 # --- 8. 执行安装 ---
 if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
-    mapfile -t SELECTED_LINES < <(tail -n +3 "$TARGET_FILE")
+    mapfile -t SELECTED_LINES < <(awk -F'\t' 'NF >= 3 { print }' "$TARGET_FILE")
     APT_PACKAGES=()
     SNAP_PACKAGES=()
     FLATPAK_PACKAGES=()
