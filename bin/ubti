@@ -7,6 +7,111 @@ set -euo pipefail
 ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
 export LC_ALL=C
 
+translate_preview_fields() {
+    awk '
+        BEGIN {
+            map["Package"]="软件包";
+            map["Architecture"]="架构";
+            map["Version"]="版本";
+            map["Priority"]="优先级";
+            map["Section"]="分类";
+            map["Origin"]="来源";
+            map["Maintainer"]="维护者";
+            map["Original-Maintainer"]="原维护者";
+            map["Bugs"]="问题反馈";
+            map["Installed-Size"]="安装大小";
+            map["Depends"]="依赖";
+            map["Pre-Depends"]="预依赖";
+            map["Recommends"]="推荐";
+            map["Suggests"]="建议";
+            map["Conflicts"]="冲突";
+            map["Replaces"]="替换";
+            map["Provides"]="提供";
+            map["Filename"]="文件名";
+            map["Size"]="下载大小";
+            map["Homepage"]="主页";
+            map["Description-en"]="描述";
+            map["Description"]="描述";
+            map["Snap-Name"]="名称";
+            map["Name"]="名称";
+            map["Summary"]="摘要";
+            map["Publisher"]="发布者";
+            map["License"]="许可证";
+            map["Contact"]="联系方式";
+            map["Commands"]="命令";
+            map["Services"]="服务";
+            map["Notes"]="备注";
+            map["Title"]="标题";
+            map["Comment"]="简介";
+        }
+        /^[A-Za-z0-9][A-Za-z0-9-]*:/ {
+            key = $0;
+            sub(/:.*/, "", key);
+            if (key in map) {
+                sub("^" key ":", map[key] ":");
+            }
+        }
+        { print }
+    '
+}
+
+show_apt_preview() {
+    local pkg="$1"
+    local raw_file translated_file desc_md5
+
+    raw_file="$(mktemp)"
+    translated_file="$(mktemp)"
+    apt-cache show "$pkg" 2>/dev/null | head -80 > "$raw_file"
+
+    desc_md5="$(awk -F': ' '/^Description-md5:/ { print $2; exit }' "$raw_file")"
+    if [[ -n "$desc_md5" ]]; then
+        awk -v md5="$desc_md5" '
+            BEGIN { found=0; printing=0 }
+            /^Description-md5: / {
+                found = ($2 == md5)
+                printing = 0
+                next
+            }
+            found && /^Description-/ {
+                printing = 1
+                sub(/^Description-[^:]+:/, "描述:")
+                print
+                next
+            }
+            found && printing && /^ / { print; next }
+            found && printing { exit }
+        ' /var/lib/apt/lists/*Translation-zh* 2>/dev/null > "$translated_file" || true
+    fi
+
+    if [[ -s "$translated_file" ]]; then
+        awk '
+            /^Description-en:/ { skip=1; while ((getline line) > 0 && line ~ /^ /) {} }
+            skip { skip=0 }
+            { print }
+        ' "$raw_file" | translate_preview_fields
+        cat "$translated_file"
+    else
+        translate_preview_fields < "$raw_file"
+    fi
+
+    rm -f "$raw_file" "$translated_file"
+}
+
+if [[ "${1:-}" == "--preview-package" ]]; then
+    src="${2:-}"
+    pkg="${3:-}"
+    export LC_ALL="$ORIGINAL_LANG"
+
+    if [[ "$src" == "snap" ]]; then
+        snap info "$pkg" 2>/dev/null | translate_preview_fields
+    elif [[ "$src" == "flatpak" ]]; then
+        (flatpak remote-info --user flathub "$pkg" 2>/dev/null || flatpak remote-info --system flathub "$pkg" 2>/dev/null) | translate_preview_fields
+    else
+        show_apt_preview "$pkg"
+    fi
+    exit 0
+fi
+
 # --- 0. 内部生成器拦截 (由 fzf reload 或后台进程触发) ---
 if [[ "${1:-}" == "--generate-list" ]]; then
     FORCE_REFRESH="$2"
@@ -225,7 +330,7 @@ mkdir -p "$CACHE_DIR"
 SNAP_CACHE="${CACHE_DIR}/snap_packages.txt"
 FLATPAK_CACHE="${CACHE_DIR}/flatpak_packages.txt"
 
-PREVIEW_CMD="export LC_ALL=\"$ORIGINAL_LANG\"; line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); if [[ \"\$src\" == snap ]]; then snap info \"\$pkg\" 2>/dev/null; elif [[ \"\$src\" == flatpak ]]; then flatpak remote-info --user flathub \"\$pkg\" 2>/dev/null || flatpak remote-info --system flathub \"\$pkg\" 2>/dev/null; else apt-cache show \"\$pkg\" 2>/dev/null | head -60; fi"
+PREVIEW_CMD="line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); \"$SCRIPT_PATH\" --preview-package \"\$src\" \"\$pkg\""
 
 cleanup() {
     rm -rf "$TMP_DIR"
