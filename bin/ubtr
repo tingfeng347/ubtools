@@ -140,6 +140,7 @@ fi
 # --- 6. 文件安全设置 ---
 TMP_DIR=$(mktemp -d -t unified_ubtr.XXXXXX)
 TARGET_FILE="${TMP_DIR}/target"
+LIST_FILE="${TMP_DIR}/list"
 
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT INT TERM
@@ -163,9 +164,6 @@ COLOR_SNAP=$'\033[35m'
 COLOR_FLATPAK=$'\033[36m'
 COLOR_RESET=$'\033[0m'
 FZF_MATCH_OPTIONS=()
-if [[ "$FZF_EXACT" == true ]]; then
-    FZF_MATCH_OPTIONS+=(--exact)
-fi
 FZF_HEADER="${MSG[HEADER]} | ${COLOR_BLUE}APT${COLOR_RESET}"
 if [ "$HAS_SNAP" = true ]; then
     FZF_HEADER+=" & ${COLOR_SNAP}Snap${COLOR_RESET}"
@@ -174,28 +172,59 @@ if [ "$HAS_FLATPAK" = true ]; then
     FZF_HEADER+=" & ${COLOR_FLATPAK}Flatpak${COLOR_RESET}"
 fi
 
-set +e
-fzf --multi --ansi \
-    "${FZF_MATCH_OPTIONS[@]}" \
-    --delimiter=$'\t' \
-    --with-nth=1 \
-    --preview "$PREVIEW_CMD" \
-    --preview-window=down:55%:wrap \
-    --height=95% --layout=reverse --border \
-    --bind "alt-j:last,alt-k:first" \
-    --bind "ctrl-e:toggle-exact" \
-    --bind "ctrl-r:reload(\"$SCRIPT_PATH\" --generate-data)" \
-    --tiebreak=index \
-    --header "$FZF_HEADER" \
-    --query "${QUERY_ARGS[*]:-}" \
-    < <("$SCRIPT_PATH" --generate-data) \
-    > "$TARGET_FILE"
-FZF_EXIT=$?
-set -e
+"$SCRIPT_PATH" --generate-data > "$LIST_FILE"
+QUERY_TEXT="${QUERY_ARGS[*]:-}"
+
+while true; do
+    FZF_MATCH_OPTIONS=()
+    if [[ "$FZF_EXACT" == true ]]; then
+        FZF_MATCH_OPTIONS+=(--exact)
+        CURRENT_HEADER="${FZF_HEADER} | Mode: Exact"
+    else
+        CURRENT_HEADER="${FZF_HEADER} | Mode: Fuzzy"
+    fi
+
+    set +e
+    fzf --multi --ansi \
+        "${FZF_MATCH_OPTIONS[@]}" \
+        --delimiter=$'\t' \
+        --with-nth=1 \
+        --expect=ctrl-e \
+        --print-query \
+        --preview "$PREVIEW_CMD" \
+        --preview-window=down:55%:wrap \
+        --height=95% --layout=reverse --border \
+        --bind "alt-j:last,alt-k:first" \
+        --bind "ctrl-r:reload(\"$SCRIPT_PATH\" --generate-data)" \
+        --tiebreak=index \
+        --header "$CURRENT_HEADER" \
+        --query "$QUERY_TEXT" \
+        < "$LIST_FILE" \
+        > "$TARGET_FILE"
+    FZF_EXIT=$?
+    set -e
+
+    FZF_KEY=""
+    if [[ -s "$TARGET_FILE" ]]; then
+        FZF_KEY="$(sed -n '1p' "$TARGET_FILE")"
+        QUERY_TEXT="$(sed -n '2p' "$TARGET_FILE")"
+    fi
+
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
+        if [[ "$FZF_EXACT" == true ]]; then
+            FZF_EXACT=false
+        else
+            FZF_EXACT=true
+        fi
+        continue
+    fi
+
+    break
+done
 
 # --- 8. 执行卸载逻辑 (分发处理) ---
 if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
-    mapfile -t SELECTED_LINES < "$TARGET_FILE"
+    mapfile -t SELECTED_LINES < <(tail -n +3 "$TARGET_FILE")
     APT_PKGS=()
     SNAP_PKGS=()
     FLATPAK_PKGS=()

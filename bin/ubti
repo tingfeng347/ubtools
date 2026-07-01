@@ -219,36 +219,29 @@ command -v fzf >/dev/null 2>&1 || { echo "${MSG[ERR_FZF]}" >&2; exit 1; }
 # --- 5. 异步逻辑与文件安全设置 ---
 TMP_DIR=$(mktemp -d -t ubti_fzf.XXXXXX)
 TARGET_FILE="${TMP_DIR}/target"
+LIST_FILE="${TMP_DIR}/list"
 INSTALLED_LIST="${TMP_DIR}/installed"
-PIPE_FIFO="${TMP_DIR}/fifo"
 mkdir -p "$CACHE_DIR"
 SNAP_CACHE="${CACHE_DIR}/snap_packages.txt"
 FLATPAK_CACHE="${CACHE_DIR}/flatpak_packages.txt"
-mkfifo "$PIPE_FIFO"
 
 PREVIEW_CMD="export LC_ALL=\"$ORIGINAL_LANG\"; line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); if [[ \"\$src\" == snap ]]; then snap info \"\$pkg\" 2>/dev/null; elif [[ \"\$src\" == flatpak ]]; then flatpak remote-info --user flathub \"\$pkg\" 2>/dev/null || flatpak remote-info --system flathub \"\$pkg\" 2>/dev/null; else apt-cache show \"\$pkg\" 2>/dev/null | head -60; fi"
 
 cleanup() {
-    if [[ -n "${PID_GEN:-}" ]]; then kill "$PID_GEN" 2>/dev/null || true; fi
     rm -rf "$TMP_DIR"
 }
 abort() { cleanup; exit 130; }
 trap cleanup EXIT
 trap abort INT TERM
 
-# --- 6. 数据生成器 (后台运行) ---
-"$SCRIPT_PATH" --generate-list "$FORCE_REFRESH" "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" > "$PIPE_FIFO" 2>/dev/null &
-PID_GEN=$!
+# --- 6. 数据生成器 ---
+"$SCRIPT_PATH" --generate-list "$FORCE_REFRESH" "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" > "$LIST_FILE" 2>/dev/null
 
 # --- 7. 交互式 FZF 渲染 ---
 COLOR_BLUE=$'\033[34m'
 COLOR_PURPLE=$'\033[35m'
 COLOR_CYAN=$'\033[36m'
 COLOR_RESET=$'\033[0m'
-FZF_MATCH_OPTIONS=()
-if [[ "$FZF_EXACT" == true ]]; then
-    FZF_MATCH_OPTIONS+=(--exact)
-fi
 FZF_HEADER="${MSG[HEADER]}"
 if [[ "$SHOW_APT" == true ]]; then
     FZF_HEADER+=" | ${COLOR_BLUE}APT${COLOR_RESET}"
@@ -261,29 +254,58 @@ if [[ "$SHOW_FLATPAK" == true ]]; then
 fi
 
 RELOAD_CMD=$(printf "%q " "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK"); RELOAD_CMD="${RELOAD_CMD% }"
+QUERY_TEXT="${QUERY_ARGS[*]:-}"
 
-set +e
-fzf --multi --ansi \
-    "${FZF_MATCH_OPTIONS[@]}" \
-    --delimiter=$'\t' \
-    --with-nth=1 \
-    --preview "$PREVIEW_CMD" \
-    --preview-window=down:55%:wrap \
-    --height=95% --layout=reverse --border \
-    --bind "alt-j:last,alt-k:first" \
-    --bind "ctrl-e:toggle-exact" \
-    --bind "ctrl-r:reload(${RELOAD_CMD})" \
-    --tiebreak=index \
-    --header "$FZF_HEADER" \
-    --query "${QUERY_ARGS[*]:-}" \
-    < "$PIPE_FIFO" \
-    > "$TARGET_FILE"
-FZF_EXIT=$?
-set -e
+while true; do
+    FZF_MATCH_OPTIONS=()
+    if [[ "$FZF_EXACT" == true ]]; then
+        FZF_MATCH_OPTIONS+=(--exact)
+        CURRENT_HEADER="${FZF_HEADER} | Mode: Exact"
+    else
+        CURRENT_HEADER="${FZF_HEADER} | Mode: Fuzzy"
+    fi
+
+    set +e
+    fzf --multi --ansi \
+        "${FZF_MATCH_OPTIONS[@]}" \
+        --delimiter=$'\t' \
+        --with-nth=1 \
+        --expect=ctrl-e \
+        --print-query \
+        --preview "$PREVIEW_CMD" \
+        --preview-window=down:55%:wrap \
+        --height=95% --layout=reverse --border \
+        --bind "alt-j:last,alt-k:first" \
+        --bind "ctrl-r:reload(${RELOAD_CMD})" \
+        --tiebreak=index \
+        --header "$CURRENT_HEADER" \
+        --query "$QUERY_TEXT" \
+        < "$LIST_FILE" \
+        > "$TARGET_FILE"
+    FZF_EXIT=$?
+    set -e
+
+    FZF_KEY=""
+    if [[ -s "$TARGET_FILE" ]]; then
+        FZF_KEY="$(sed -n '1p' "$TARGET_FILE")"
+        QUERY_TEXT="$(sed -n '2p' "$TARGET_FILE")"
+    fi
+
+    if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
+        if [[ "$FZF_EXACT" == true ]]; then
+            FZF_EXACT=false
+        else
+            FZF_EXACT=true
+        fi
+        continue
+    fi
+
+    break
+done
 
 # --- 8. 执行安装 ---
 if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
-    mapfile -t SELECTED_LINES < "$TARGET_FILE"
+    mapfile -t SELECTED_LINES < <(tail -n +3 "$TARGET_FILE")
     APT_PACKAGES=()
     SNAP_PACKAGES=()
     FLATPAK_PACKAGES=()
