@@ -17,6 +17,7 @@ translate_preview_fields() {
             map["Version"]="版本";
             map["Priority"]="优先级";
             map["Section"]="分类";
+            map["Source"]="源码包";
             map["Origin"]="来源";
             map["Maintainer"]="维护者";
             map["Original-Maintainer"]="原维护者";
@@ -31,6 +32,14 @@ translate_preview_fields() {
             map["Provides"]="提供";
             map["Filename"]="文件名";
             map["Size"]="下载大小";
+            map["Download-Size"]="下载大小";
+            map["APT-Manual-Installed"]="手动安装";
+            map["APT-Sources"]="APT 源";
+            map["Task"]="任务";
+            map["MD5sum"]="MD5 校验";
+            map["SHA1"]="SHA1 校验";
+            map["SHA256"]="SHA256 校验";
+            map["SHA512"]="SHA512 校验";
             map["Homepage"]="主页";
             map["Description-en"]="描述";
             map["Description"]="描述";
