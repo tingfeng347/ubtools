@@ -17,6 +17,9 @@ curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、兼容命令及共享文件。
+一键安装会逐个显示 13 个文件的下载进度：连接超时 10 秒、单次请求最多 30 秒，失败重试一次。
+下载失败时退出并保留现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
+如果停在下载阶段，请检查 `raw.githubusercontent.com` 的网络连通性。
 在源码目录也可以用 `./bin/ub` 代替下面的 `ub`，无需全局安装。
 
 ## 命令
