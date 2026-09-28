@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Read-only, timed diagnostics for package managers and ubti caches.
+set -euo pipefail
+UB_SCRIPT=$(readlink -f "$0")
+source "${UB_SCRIPT%/*}/ubtools-common.bash"
+OFFLINE=false
+ARGS=()
+while (( $# )); do
+    case "$1" in
+        --offline) OFFLINE=true; shift;;
+        --timeout)
+            [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { ub_error '--timeout requires positive integer seconds'; exit 2; }
+            UB_TIMEOUT="$2"; shift 2;;
+        *) ARGS+=("$1"); shift;;
+    esac
+done
+ub_parse "${ARGS[@]}"
+if [[ "$UB_HELP" == true ]]; then
+    cat <<HELP
+Usage: ${UB_COMMAND_NAME:-ubtd} [--apt] [--snap] [--flatpak] [--offline] [--timeout SECONDS]
+$(ub_text '只读诊断：依赖、锁占用、索引、缓存年龄、源连通性以及各步骤耗时。' 'Read-only checks: dependencies, locks, indexes, cache age, remote connectivity and stage timings.')
+  --offline  $(ub_text '仅检查本地环境，不访问远程源' 'Check local state without contacting remotes')
+  --timeout  $(ub_text '每项查询的超时秒数（默认 15）' 'Timeout per query in seconds (default 15)')
+$(ub_text '检查失败返回 1；可选工具缺失记为 SKIP。' 'Failed checks exit 1; absent optional tools are marked SKIP.')
+HELP
+    exit 0
+fi
+if [[ "$UB_LIST" == true || "$UB_DRY_RUN" == true || "$UB_EXACT" == true || ${#UB_QUERY[@]} -gt 0 || -n "$UB_GENERATE" ]]; then
+    ub_error 'ubtd accepts only source flags, --offline and --timeout'; exit 2
+fi
+ub_init
+FAILED=0
+report() { printf '%-5s %-32s %8s  %s\n' "$1" "$2" "$3" "${4:-}"; }
+probe() {
+    local label="$1" start elapsed code=0; shift
+    start=$(date +%s%3N)
+    timeout --foreground --kill-after=2s "${UB_TIMEOUT}s" "$@" > "$UB_TMP/probe" 2> "$UB_TMP/probe.err" || code=$?
+    elapsed=$(( $(date +%s%3N) - start ))
+    if (( code == 0 )); then report OK "$label" "${elapsed}ms"
+    else report FAIL "$label" "${elapsed}ms" "exit=$code $(ub_text '失败或超时' 'failed or timed out')"; FAILED=1; fi
+    return "$code"
+}
+check_lock() {
+    local file="$1" output code=0
+    [[ -e "$file" ]] || return 0
+    if ! command -v fuser >/dev/null; then report SKIP "$file" '-' 'fuser unavailable'; return 0; fi
+    # fuser reports open users, not proof that an advisory lock is held.
+    output=$(timeout --foreground --kill-after=2s "${UB_TIMEOUT}s" fuser "$file" 2>/dev/null) || code=$?
+    if [[ -n "$output" ]]; then
+        report WARN "$file" '-' "$(ub_text '文件被进程使用；可能存在锁占用' 'file open by process; possible lock contention'): $output"
+    elif (( code == 0 || code == 1 )); then
+        report OK "$file" '-' "$(ub_text '当前用户可见范围内未发现占用' 'no users visible to current user')"
+    else report WARN "$file" '-' "fuser exit=$code"; fi
+}
+cache_status() {
+    local name="$1" file="${XDG_CACHE_HOME:-$HOME/.cache}/ubti_tui/${1}_packages.txt" stamp age
+    if [[ ! -s "$file" ]]; then report WARN "$name cache" '-' "$(ub_text '未建立缓存，首次使用需要加载' 'missing; first use needs a catalog fetch')"; return 0; fi
+    stamp=$(stat -c %Y "$file")
+    age=$(( $(date +%s) - stamp ))
+    if (( age > 3600 )); then report WARN "$name cache" '-' "age=${age}s; $(ub_text '过期缓存可先展示' 'stale cache can be shown first')"
+    else report OK "$name cache" '-' "age=${age}s"; fi
+}
+printf '%s\n' "$(ub_text 'ubtools 环境诊断（状态 / 阶段 / 耗时 / 说明）' 'ubtools diagnostics (status / stage / duration / detail)')"
+for dep in bash fzf timeout setsid; do
+    if command -v "$dep" >/dev/null; then report OK "dependency: $dep" '-'
+    else report FAIL "dependency: $dep" '-' missing; FAILED=1; fi
+done
+if [[ "$UB_APT" == true ]]; then
+    if command -v apt-get >/dev/null; then
+        probe 'APT local indexes' apt-cache policy || true
+        probe 'APT installed state' dpkg --audit || true
+        if [[ -s "$UB_TMP/probe" ]]; then report WARN 'dpkg audit output' '-' "$(ub_text '存在未完成配置的软件包，请运行 dpkg --audit 查看' 'unfinished package configuration; inspect dpkg --audit')"; fi
+        probe 'APT update list' apt list --upgradable || true
+        check_lock /var/lib/dpkg/lock-frontend
+        check_lock /var/lib/dpkg/lock
+        check_lock /var/lib/apt/lists/lock
+        if [[ "$OFFLINE" == false ]]; then
+            if ! command -v curl >/dev/null; then report SKIP 'APT connectivity' '-' 'curl unavailable'
+            elif probe 'APT index targets' apt-get indextargets --format '$(URI)'; then
+                # Check at most three different configured HTTP hosts. Never print
+                # full URIs, which may contain embedded credentials or query tokens.
+                cp "$UB_TMP/probe" "$UB_TMP/targets"
+                hosts=0
+                while IFS= read -r uri; do
+                    host="${uri#*://}"; host="${host%%/*}"; host="${host##*@}"
+                    probe "APT HEAD: $host" curl --silent --fail --head --location --max-time "$UB_TIMEOUT" --output /dev/null "$uri" || true
+                    hosts=$((hosts+1))
+                done < <(awk '/^https?:\/\// {host=$0; sub(/^[^:]+:\/\//,"",host); sub(/\/.*/,"",host); if (!seen[host]++) {print; if (++n==3) exit}}' "$UB_TMP/targets")
+                if (( hosts == 0 )); then report SKIP 'APT connectivity' '-' "$(ub_text '没有可探测的 HTTP 索引目标' 'no HTTP index targets available')"; fi
+            fi
+        fi
+    else report SKIP APT '-' 'apt-get unavailable'; fi
+fi
+if [[ "$UB_SNAP" == true ]]; then
+    cache_status snap
+    if command -v snap >/dev/null; then
+        probe 'Snap daemon/version' snap version || true
+        probe 'Snap installed list' snap list || true
+        if [[ "$OFFLINE" == false ]]; then probe 'Snap refresh candidates' snap refresh --list || true; fi
+    else report SKIP Snap '-' 'snap unavailable'; fi
+fi
+if [[ "$UB_FLATPAK" == true ]]; then
+    cache_status flatpak
+    if command -v flatpak >/dev/null; then
+        for scope in user system; do
+            probe "Flatpak $scope remotes" flatpak remotes "--$scope" --columns=name || true
+            if [[ ! -s "$UB_TMP/probe" ]]; then report SKIP "Flatpak $scope connectivity" '-' 'no remotes'; continue; fi
+            probe "Flatpak $scope installed" flatpak list "--$scope" --columns=ref || true
+            if [[ "$OFFLINE" == false ]]; then
+                probe "Flatpak $scope remote query" flatpak remote-ls "--$scope" --updates --columns=ref || true
+            fi
+        done
+    else report SKIP Flatpak '-' 'flatpak unavailable'; fi
+fi
+if [[ "$OFFLINE" == true ]]; then report SKIP 'Remote connectivity' '-' offline; fi
+exit "$FAILED"

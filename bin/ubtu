@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Unified APT / Snap / Flatpak update selector.
+set -euo pipefail
+UB_SCRIPT=$(readlink -f "$0")
+source "${UB_SCRIPT%/*}/ubtools-common.bash"
+
+if [[ "${1:-}" == --preview ]]; then
+    printf '%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n' \
+        "$(ub_text '来源' 'Source')" "${2:-}" "$(ub_text '范围' 'Scope')" "${3:-}" \
+        "$(ub_text '软件包' 'Package')" "${4:-}" "$(ub_text '当前版本' 'Current')" "${5:-}" \
+        "$(ub_text '目标版本' 'Target')" "${6:-}"
+    exit 0
+fi
+# Index refresh is explicit; merely listing updates does not run sudo apt update.
+REFRESH_INDEX=false
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == --refresh-index ]]; then REFRESH_INDEX=true; else ARGS+=("$arg"); fi
+done
+ub_parse "${ARGS[@]}"
+if [[ "$UB_HELP" == true ]]; then
+    cat <<HELP
+Usage: ${UB_COMMAND_NAME:-ubtu} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
+$(ub_text '多选并更新软件包；显示当前版本 → 新版本。' 'Select updates; show current → new versions.')
+  --list          $(ub_text '只列出更新，不启动 TUI' 'List updates without opening the TUI')
+  --dry-run       $(ub_text '选择后只打印命令' 'Select and print commands without updating')
+  --refresh-index $(ub_text '先更新 APT 索引（需要 sudo）' 'Refresh APT indexes first (requires sudo)')
+Tab: multi-select | Enter: update | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit
+HELP
+    exit 0
+fi
+ub_init
+
+updates_apt() {
+    local file="$UB_TMP/apt" pkg old new
+    ub_capture "$file" apt list --upgradable || return 0
+    while IFS=$'\t' read -r pkg old new; do ub_row apt system "$pkg" "$old" "$new" "$pkg"; done < <(
+        awk '/\[upgradable from: / {
+            split($1, p, "/"); name=p[1]
+            if ($3 != "all" && index(name, ":") == 0) name=name ":" $3
+            old=$0; sub(/.*\[upgradable from: /, "", old); sub(/\].*/, "", old)
+            printf "%s\t%s\t%s\n", name, old, $2
+        }' "$file"
+    )
+}
+updates_snap() {
+    local old="$UB_TMP/snap-old" new="$UB_TMP/snap-new" pkg current target
+    ub_capture "$old" snap list || return 0
+    ub_capture "$new" snap refresh --list || return 0
+    while IFS=$'\t' read -r pkg current target; do ub_row snap system "$pkg" "$current" "$target" "$pkg"; done < <(
+        awk 'FILENAME==ARGV[1] { if ($3 ~ /^[0-9]+$/) installed[$1]=$2 "@" $3; next }
+            $3 ~ /^[0-9]+$/ && ($1 in installed) {print $1 "\t" installed[$1] "\t" $2 "@" $3}' "$old" "$new"
+    )
+}
+updates_flatpak() {
+    local scope="$1" kind file old ref current target
+    for kind in app runtime; do
+        old="$UB_TMP/fp-$scope-$kind-old" file="$UB_TMP/fp-$scope-$kind-new"
+        ub_capture "$old" flatpak list "--$scope" "--$kind" --all --columns=ref:full,version,active:full,origin || continue
+        [[ -s "$old" ]] || continue
+        ub_capture "$file" flatpak remote-ls "--$scope" "--$kind" --updates --all --columns=ref:full,version,commit:full,origin || continue
+        while IFS=$'\t' read -r ref current target; do
+            ub_row flatpak "$scope" "$kind/$ref" "$current" "$target" "$kind/$ref"
+        done < <(
+            awk -F'\t' 'FILENAME==ARGV[1] {
+                key=$1 SUBSEP $4; installed[key]=($2 == "" ? "-" : $2) "@" substr($3,1,12); next
+            }
+            {key=$1 SUBSEP $4; if (key in installed && !seen[key]++)
+                print $1 "\t" installed[key] "\t" ($2 == "" ? "-" : $2) "@" substr($3,1,12)
+            }' "$old" "$file"
+        )
+    done
+}
+ub_generate() {
+    if [[ "$UB_APT" == true ]] && command -v apt >/dev/null; then updates_apt & fi
+    if [[ "$UB_SNAP" == true ]] && command -v snap >/dev/null; then updates_snap & fi
+    if [[ "$UB_FLATPAK" == true ]] && command -v flatpak >/dev/null; then
+        updates_flatpak user & updates_flatpak system &
+    fi
+    wait
+}
+ub_apply() {
+    local row display src scope id current target
+    local apt_pkgs=() snap_pkgs=() fp_user=() fp_system=()
+    for row in "${UB_SELECTED[@]}"; do
+        IFS=$'\t' read -r display src scope id current target <<< "$row"
+        case "$src/$scope" in
+            apt/system) apt_pkgs+=("$id");; snap/system) snap_pkgs+=("$id");;
+            flatpak/user) fp_user+=("$id");; flatpak/system) fp_system+=("$id");;
+        esac
+    done
+    if (( ${#apt_pkgs[@]} )); then ub_command sudo apt-get install --only-upgrade "${apt_pkgs[@]}"; fi
+    if (( ${#snap_pkgs[@]} )); then ub_command sudo snap refresh "${snap_pkgs[@]}"; fi
+    if (( ${#fp_user[@]} )); then ub_command flatpak update --user "${fp_user[@]}"; fi
+    if (( ${#fp_system[@]} )); then ub_command sudo flatpak update --system "${fp_system[@]}"; fi
+}
+if [[ -n "$UB_GENERATE" ]]; then ub_generate | tee "$UB_GENERATE"; exit 0; fi
+if [[ "$REFRESH_INDEX" == true ]]; then
+    if [[ "$UB_DRY_RUN" == true || "$UB_LIST" == true || "$UB_APT" == false ]]; then
+        ub_error '--refresh-index requires APT, and cannot be combined with --list or --dry-run'; exit 2
+    fi
+    command -v apt-get >/dev/null || { ub_error 'apt-get not found'; exit 1; }
+    ub_command sudo apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=0 update
+fi
+if [[ "$UB_LIST" == true ]]; then ub_generate; exit 0; fi
+UB_HEADER=$(ub_text 'Tab:多选 | Enter:更新 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出 | 当前 → 新版本（后台加载）' 'Tab:Multi | Enter:Update | Ctrl+R:Reload | Ctrl+E:Exact/Fuzzy | Esc:Exit | Current → New (loading in background)')
+ub_ui

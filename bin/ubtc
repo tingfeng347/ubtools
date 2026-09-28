@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Select package caches, orphan dependencies, and obsolete revisions to clean.
+set -euo pipefail
+UB_SCRIPT=$(readlink -f "$0")
+source "${UB_SCRIPT%/*}/ubtools-common.bash"
+
+human_size() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || printf '%s B\n' "$1"; }
+cleanup_preview() {
+    local src="$1" scope="$2" id="$3" size="$4" detail="$5"
+    printf '%s/%s: %s\n%s: %s\n\n' "$src" "$scope" "$id" "$(ub_text '可释放空间' 'Reclaimable size')" "$size"
+    case "$src/$id" in
+        apt/cache)
+            printf '%s\n' "$(ub_text '删除 APT 下载缓存；不卸载已安装软件包。' 'Remove downloaded APT archives; installed packages remain.')";;
+        apt/autoremove)
+            timeout --foreground --kill-after=2s 15s apt-get --simulate autoremove;;
+        flatpak/unused)
+            printf '%s\n' "$(ub_text '以下为已安装运行时，不代表全部可删除。执行时由 Flatpak 筛选闲置项并展示最终清单，需要再次确认；不删除应用数据。' 'Installed runtimes below are not all removable. Flatpak determines unused refs and shows the final removal plan for confirmation; app data is preserved.')"
+            timeout --foreground --kill-after=2s 15s flatpak list "--$scope" --runtime --all --columns=ref:full,size;;
+        snap/*)
+            printf '%s\n' "$(ub_text '仅删除已禁用的旧修订；执行前重新检查状态。' 'Remove only this disabled revision; its state is checked again before removal.')"
+            printf 'Revision: %s\n' "$detail";;
+    esac
+}
+if [[ "${1:-}" == --preview ]]; then
+    cleanup_preview "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+    exit 0
+fi
+ub_parse "$@"
+if [[ "$UB_HELP" == true ]]; then
+    cat <<HELP
+Usage: ${UB_COMMAND_NAME:-ubtc} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
+$(ub_text '预览并多选清理 APT 下载缓存、孤立依赖、Snap 旧修订和 Flatpak 闲置运行时。' 'Preview and select APT archives, orphan dependencies, disabled Snap revisions and unused Flatpak runtimes.')
+  --list     $(ub_text '只列出清理入口，不执行清理' 'List cleanup actions without removing anything')
+  --dry-run  $(ub_text '选择后只打印命令' 'Select and print commands without removing anything')
+$(ub_text 'Flatpak 闲置项的准确清单和空间由原生命令在最终确认前展示。' 'Flatpak shows its exact unused-ref plan and sizes before its final confirmation.')
+Tab: multi-select | Enter: review | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit
+HELP
+    exit 0
+fi
+ub_init
+cleanup_apt() {
+    local bytes file="$UB_TMP/autoremove" count
+    bytes=$(du -sb /var/cache/apt/archives 2>/dev/null | awk '{print $1}') || bytes=''
+    # This is archive-directory disk usage, an estimate including directory overhead.
+    ub_row apt system cache "${bytes:+$(human_size "$bytes")}" '-' "$(ub_text 'APT 下载缓存（目录占用估算）' 'APT download cache (directory size estimate)')"
+    ub_capture "$file" apt-get --simulate autoremove || return 0
+    count=$(awk '$1 == "Remv" {n++} END {print n+0}' "$file")
+    if (( count > 0 )); then
+        ub_row apt system autoremove '-' "$count packages" "$(ub_text 'APT 孤立依赖（预览移除清单）' 'APT orphan dependencies (preview removal plan)')"
+    fi
+}
+cleanup_snap() {
+    local file="$UB_TMP/snap-all" pkg rev bytes
+    ub_capture "$file" snap list --all || return 0
+    while read -r pkg rev; do
+        bytes=$(stat -c %s "/var/lib/snapd/snaps/${pkg}_${rev}.snap" 2>/dev/null) || bytes=''
+        ub_row snap system "$pkg" "${bytes:+$(human_size "$bytes")}" "$rev" "$pkg (disabled revision $rev)"
+    done < <(awk '$3 ~ /^[0-9]+$/ && $NF ~ /(^|,)disabled(,|$)/ {print $1, $3}' "$file")
+}
+cleanup_flatpak() {
+    local scope="$1" file="$UB_TMP/runtime-$1"
+    ub_capture "$file" flatpak list "--$scope" --runtime --all --columns=ref:full,size || return 0
+    if [[ -s "$file" ]]; then
+        ub_row flatpak "$scope" unused '-' 'native preview' "$(ub_text '检查并清理闲置运行时（原生清单确认）' 'Check and remove unused runtimes (native confirmation)')"
+    fi
+}
+ub_generate() {
+    if [[ "$UB_APT" == true ]] && command -v apt-get >/dev/null; then cleanup_apt & fi
+    if [[ "$UB_SNAP" == true ]] && command -v snap >/dev/null; then cleanup_snap & fi
+    if [[ "$UB_FLATPAK" == true ]] && command -v flatpak >/dev/null; then
+        cleanup_flatpak user & cleanup_flatpak system &
+    fi
+    wait
+}
+ub_apply() {
+    local row display src scope id size detail check
+    for row in "${UB_SELECTED[@]}"; do
+        IFS=$'\t' read -r display src scope id size detail <<< "$row"
+        case "$src/$scope/$id" in
+            apt/system/cache) ub_command sudo apt-get clean;;
+            apt/system/autoremove) ub_command sudo apt-get autoremove;;
+            flatpak/user/unused) ub_command flatpak uninstall --user --unused;;
+            flatpak/system/unused) ub_command sudo flatpak uninstall --system --unused;;
+            snap/system/*)
+                if [[ "$UB_DRY_RUN" != true ]]; then
+                    check="$UB_TMP/recheck"
+                    ub_capture "$check" snap list --all "$id" || return 1
+                    if ! awk -v pkg="$id" -v rev="$detail" '
+                        $1==pkg && $3==rev && $NF ~ /(^|,)disabled(,|$)/ {found=1}
+                        END {exit !found}' "$check"; then
+                        ub_error "$(ub_text '旧修订状态已改变，跳过' 'Revision state changed; skipping'): $id@$detail"
+                        continue
+                    fi
+                fi
+                ub_command sudo snap remove "$id" "--revision=$detail";;
+        esac
+    done
+}
+if [[ -n "$UB_GENERATE" ]]; then ub_generate | tee "$UB_GENERATE"; exit 0; fi
+if [[ "$UB_LIST" == true ]]; then ub_generate; exit 0; fi
+UB_HEADER=$(ub_text 'Tab:多选 | Enter:预览并确认清理 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出 | 空间未知显示 -' 'Tab:Multi | Enter:Review cleanup | Ctrl+R:Reload | Ctrl+E:Exact/Fuzzy | Esc:Exit | Unknown sizes: -')
+ub_ui
