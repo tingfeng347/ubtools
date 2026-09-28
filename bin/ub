@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# One public entry point; legacy commands remain available.
+set -euo pipefail
+ROOT="$(dirname "$(readlink -f "$0")")"
+help() {
+    cat <<HELP
+Usage: ub <command> [options]
+
+  install   搜索并安装软件 / Search and install packages
+  remove    搜索并卸载软件 / Search and remove packages
+  update    查看并更新软件 / Select package updates
+  doctor    环境、缓存和连通性诊断 / Diagnose package managers
+  clean     预览并清理空间 / Preview cleanup actions
+  mirror    镜像源测速与切换 / Test and switch Ubuntu mirrors
+  ai        AI 编程工具管理 / Manage Codex, Claude Code and OpenCode
+
+Examples:
+  ub install firefox
+  ub update --dry-run
+  ub doctor --offline
+  ub clean --list
+  ub mirror test
+  ub ai install codex claude opencode --dry-run
+
+Use ub <command> --help for details. Completion: ub completion bash|zsh|fish. Legacy ubti/ubtr/ubtu/ubtd/ubtc/ubtm/ubta still work.
+HELP
+}
+case "${1:-}" in
+    ''|--help|-h) help; exit 0;;
+    help)
+        shift
+        if (( $# == 0 )); then help; exit 0; fi
+        [[ $# == 1 ]] || { help >&2; exit 2; }
+        exec "$ROOT/ub" "$1" --help;;
+esac
+command_name="$1"; shift
+export UB_COMMAND_NAME="ub $command_name"
+case "$command_name" in
+    completion)
+        [[ $# == 1 ]] || { echo 'Usage: ub completion bash|zsh|fish' >&2; exit 2; }
+        source "$ROOT/ubtools-completion.bash"
+        ub_completion "$1";;
+    install) exec "$ROOT/ubti" "$@";;
+    remove) exec "$ROOT/ubtr" "$@";;
+    update) exec "$ROOT/ubtu" "$@";;
+    doctor) exec "$ROOT/ubtd" "$@";;
+    clean) exec "$ROOT/ubtc" "$@";;
+    mirror|ai)
+        command -v python3 >/dev/null || { echo 'Install python3 to use ub mirror / ub ai.' >&2; exit 1; }
+        export PYTHONDONTWRITEBYTECODE=1
+        exec python3 "$ROOT/ubtools_${command_name}.py" "$@";;
+    *) echo "Unknown command: $command_name. Run ub --help." >&2; exit 2;;
+esac

@@ -17,12 +17,12 @@ APT_UPDATED=0
 
 prompt_yes_no() {
     local prompt="$1"
-    local yn
+    local yn=""
 
-    if [[ -r /dev/tty ]]; then
-        read -rp "$prompt" yn < /dev/tty
+    if [[ -r /dev/tty ]] && ( : < /dev/tty ) 2>/dev/null; then
+        read -rp "$prompt" yn < /dev/tty || return 1
     else
-        read -rp "$prompt" yn
+        read -rp "$prompt" yn || return 1
     fi
 
     [[ ! "$yn" =~ ^[Nn] ]]
@@ -70,7 +70,7 @@ echo ""
 install_fzf() {
     echo -e "${YELLOW}  未检测到 fzf，核心依赖，必须安装。${RESET}"
     if ! prompt_yes_no "  是否安装? [Y/n] "; then
-        echo -e "${RED}  已取消，ubti/ubtr 无法运行。${RESET}"
+        echo -e "${RED}  已取消，包管理 TUI 无法运行。${RESET}"
         exit 1
     fi
     ensure_sudo
@@ -131,6 +131,14 @@ else
 fi
 echo ""
 
+# Mirror and AI management use Python's standard library and curl installers.
+for dependency in python3 curl; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+        ensure_sudo
+        apt_install_packages "$dependency"
+    fi
+done
+
 # --- 2. 检查并安装可选依赖 ---
 echo -e "${CYAN}[2/4]${RESET} 检查可选依赖..."
 if command -v flatpak >/dev/null 2>&1; then
@@ -144,33 +152,37 @@ fi
 if command -v snap >/dev/null 2>&1; then
     echo -e "  ${GREEN}✓${RESET} snap 已安装"
 else
-    install_snap
+    install_snap || true
 fi
 echo ""
 
 # --- 3. 安装脚本 ---
-echo -e "${CYAN}[3/4]${RESET} 安装 ubti / ubtr 到 ${BIN_DIR}..."
-
-# 如果通过 curl | bash 运行，需要先下载脚本文件
+echo -e "${CYAN}[3/4]${RESET} 安装 ub 和七个兼容命令 到 ${BIN_DIR}..."
+COMMANDS=(ub ubti ubtr ubtu ubtd ubtc ubtm ubta)
+HELPERS=(ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py)
+FILES=("${COMMANDS[@]}" "${HELPERS[@]}")
 RAW_BASE="https://raw.githubusercontent.com/tingfeng347/ubtools/main"
-if [[ ! -f "$SCRIPT_DIR/bin/ubti" ]] || [[ ! -f "$SCRIPT_DIR/bin/ubtr" ]]; then
-    TMPDIR="$(mktemp -d)"
-    mkdir -p "$TMPDIR/bin"
+NEED_DOWNLOAD=false
+for file in "${FILES[@]}"; do
+    if [[ ! -f "$SCRIPT_DIR/bin/$file" ]]; then NEED_DOWNLOAD=true; break; fi
+done
+if [[ "$NEED_DOWNLOAD" == true ]]; then
+    UBTOOLS_INSTALL_TMP="$(mktemp -d)"
+    trap 'rm -rf "$UBTOOLS_INSTALL_TMP"' EXIT
+    mkdir -p "$UBTOOLS_INSTALL_TMP/bin"
     echo -e "  正在下载脚本..."
-    curl -fsSL "$RAW_BASE/bin/ubti" -o "$TMPDIR/bin/ubti"
-    curl -fsSL "$RAW_BASE/bin/ubtr" -o "$TMPDIR/bin/ubtr"
-    SCRIPT_DIR="$TMPDIR"
+    for file in "${FILES[@]}"; do
+        curl -fsSL "$RAW_BASE/bin/$file" -o "$UBTOOLS_INSTALL_TMP/bin/$file"
+    done
+    SCRIPT_DIR="$UBTOOLS_INSTALL_TMP"
 fi
-
-sudo cp "$SCRIPT_DIR/bin/ubti" "$BIN_DIR/ubti"
-sudo cp "$SCRIPT_DIR/bin/ubtr" "$BIN_DIR/ubtr"
-sudo chmod +x "$BIN_DIR/ubti" "$BIN_DIR/ubtr"
-
-# 清理临时目录
-if [[ -n "${TMPDIR:-}" ]]; then
-    rm -rf "$TMPDIR"
-fi
-
+sudo mkdir -p "$BIN_DIR"
+for cmd in "${COMMANDS[@]}"; do
+    sudo install -m 755 "$SCRIPT_DIR/bin/$cmd" "$BIN_DIR/$cmd"
+done
+for file in "${HELPERS[@]}"; do
+    sudo install -m 644 "$SCRIPT_DIR/bin/$file" "$BIN_DIR/$file"
+done
 echo -e "  ${GREEN}✓${RESET} 已安装"
 
 # --- 4. 初始化缓存 ---
@@ -186,12 +198,13 @@ echo -e "${GREEN}  安装完成！${RESET}"
 echo -e "${GREEN}========================================${RESET}"
 echo ""
 echo -e "用法:"
-echo -e "  ${CYAN}ubti${RESET}          # 搜索并安装软件包"
-echo -e "  ${CYAN}ubti firefox${RESET} # 搜索 firefox"
-echo -e "  ${CYAN}ubti --flatpak${RESET} # 仅显示 Flatpak 源"
+echo -e "  ${CYAN}ub install firefox${RESET} # 搜索并安装"
+echo -e "  ${CYAN}ub remove${RESET}          # 搜索并卸载"
+echo -e "  ${CYAN}ub update${RESET}          # 多选更新"
+echo -e "  ${CYAN}ub doctor${RESET}          # 环境诊断"
+echo -e "  ${CYAN}ub clean${RESET}           # 预览并清理"
+echo -e "  ${CYAN}ub mirror test${RESET}     # 镜像源测速"
+echo -e "  ${CYAN}ub ai install${RESET}      # 多选安装 AI 工具"
+echo -e "  ${CYAN}ub --help${RESET}          # 查看全部命令"
 echo ""
-echo -e "  ${CYAN}ubtr${RESET}          # 搜索并卸载软件包"
-echo -e "  ${CYAN}ubtr firefox${RESET} # 搜索并卸载 firefox"
-echo ""
-echo -e "热键:"
-echo -e "  ${CYAN}Tab${RESET}  多选  ${CYAN}Enter${RESET} 确认  ${CYAN}Ctrl+R${RESET} 刷新  ${CYAN}Esc${RESET} 退出"
+echo -e "原有 ubti / ubtr / ubtu / ubtd / ubtc / ubtm / ubta 命令仍可使用。"

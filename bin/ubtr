@@ -215,23 +215,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- 4. 核心依赖检查 ---
-command -v fzf >/dev/null 2>&1 || { echo "${MSG[ERR_FZF]}" >&2; exit 1; }
-
-HAS_SNAP=false
-if command -v snap >/dev/null 2>&1; then
-    HAS_SNAP=true
-fi
-
-HAS_FLATPAK=false
-if command -v flatpak >/dev/null 2>&1; then
-    HAS_FLATPAK=true
-fi
-
 # --- 5. 帮助信息拦截 ---
 if [ "$SHOW_HELP" = true ]; then
     cat <<EOF
-Usage: ${0##*/} [options] [query]
+Usage: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
 
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
@@ -246,10 +233,23 @@ ${MSG[FEAT]}
   ${MSG[FEAT_3]}
 
 ${MSG[EX]}
-  ${0##*/} firefox        # search and remove across APT/Snap/Flatpak
-  ${0##*/}                # list all installed packages
+  ${UB_COMMAND_NAME:-${0##*/}} firefox        # search and remove across APT/Snap/Flatpak
+  ${UB_COMMAND_NAME:-${0##*/}}                # list all installed packages
 EOF
     exit 0
+fi
+
+# --- 4. 核心依赖检查 ---
+command -v fzf >/dev/null 2>&1 || { echo "${MSG[ERR_FZF]}" >&2; exit 1; }
+
+HAS_SNAP=false
+if command -v snap >/dev/null 2>&1; then
+    HAS_SNAP=true
+fi
+
+HAS_FLATPAK=false
+if command -v flatpak >/dev/null 2>&1; then
+    HAS_FLATPAK=true
 fi
 
 # --- 6. 文件安全设置 ---

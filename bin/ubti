@@ -322,7 +322,7 @@ fi
 # --- 3. 帮助信息拦截 ---
 if [ "$SHOW_HELP" = true ]; then
     cat <<EOF
-Usage: ${0##*/} [options] [query]
+Usage: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
 
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
@@ -339,10 +339,10 @@ ${MSG[FEAT]}
   ${MSG[FEAT_3]}
 
 ${MSG[EX]}
-  ${0##*/} firefox              # search across all sources
-  ${0##*/} --flatpak firefox    # search flatpak only
-  ${0##*/} --apt --snap vim     # search APT + Snap only
-  ${0##*/} -y                   # force refresh cache
+  ${UB_COMMAND_NAME:-${0##*/}} firefox              # search across all sources
+  ${UB_COMMAND_NAME:-${0##*/}} --flatpak firefox    # search flatpak only
+  ${UB_COMMAND_NAME:-${0##*/}} --apt --snap vim     # search APT + Snap only
+  ${UB_COMMAND_NAME:-${0##*/}} -y                   # force refresh cache
 EOF
     exit 0
 fi
