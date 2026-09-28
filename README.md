@@ -50,6 +50,14 @@ ubtr firefox          # 搜索并卸载 firefox
 ubtr -e firefox       # 关闭模糊匹配
 ```
 
+## 启动与缓存
+
+`ubti` 启动后在后台加载软件包列表，界面可立即搜索，结果随加载逐步补充。
+Snap / Flatpak 的列表缓存位于 `${XDG_CACHE_HOME:-$HOME/.cache}/ubti_tui/`，
+有效期为一小时。过期缓存会先显示，后台更新供下次启动使用；按 `Ctrl+R`
+或使用 `--refresh` 可在当前界面获取最新列表。查询失败会保留原缓存。
+APT 列表来自本机索引，不需要联网刷新。
+
 ## 热键
 
 | 键 | 功能 |
@@ -68,3 +76,12 @@ ubtr -e firefox       # 关闭模糊匹配
 ```bash
 sudo apt install fzf
 ```
+
+## 验证
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+启动回归测试使用可控的慢数据源，检查界面不会等待远程列表、缓存刷新失败保护、
+退出时终止后台查询，以及模式切换和刷新。已安装 `fzf` 时，还会在伪终端中验证真实首屏渲染。
