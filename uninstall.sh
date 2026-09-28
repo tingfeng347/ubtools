@@ -15,12 +15,12 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ubti_tui"
 
 prompt_yes_no() {
     local prompt="$1"
-    local yn
+    local yn=""
 
-    if [[ -r /dev/tty ]]; then
-        read -rp "$prompt" yn < /dev/tty
+    if [[ -r /dev/tty ]] && ( : < /dev/tty ) 2>/dev/null; then
+        read -rp "$prompt" yn < /dev/tty || return 1
     else
-        read -rp "$prompt" yn
+        read -rp "$prompt" yn || return 1
     fi
 
     [[ ! "$yn" =~ ^[Nn] ]]
@@ -33,7 +33,7 @@ echo ""
 
 echo -e "${CYAN}[1/2]${RESET} 删除命令..."
 REMOVED=0
-for cmd in ubti ubtr; do
+for cmd in ub ubti ubtr ubtu ubtd ubtc ubtm ubta ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py; do
     target="${BIN_DIR}/${cmd}"
     if [[ -e "$target" ]]; then
         sudo rm -f "$target"
@@ -64,3 +64,5 @@ fi
 echo ""
 echo -e "${GREEN}卸载完成。${RESET}"
 echo -e "注意：fzf、snap、flatpak 可能被其他程序使用，卸载脚本不会删除这些系统依赖。"
+
+echo "镜像源备份保留在 /var/lib/ubtools/mirror；AI 客户端及其配置保留。"

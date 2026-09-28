@@ -1,0 +1,436 @@
+"""Exercise the unified CLI, signed local mirrors and isolated AI operations."""
+
+import argparse
+import hashlib
+import importlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest.mock import patch
+
+BIN = Path(__file__).resolve().parents[1] / "bin"
+sys.path.insert(0, str(BIN))
+ai = importlib.import_module("ubtools_ai")
+mirror = importlib.import_module("ubtools_mirror")
+runtime = importlib.import_module("ubtools_runtime")
+
+
+class UnifiedTests(unittest.TestCase):
+    def test_help_and_dispatch(self):
+        for action in [
+            "install",
+            "remove",
+            "update",
+            "doctor",
+            "clean",
+            "mirror",
+            "ai",
+        ]:
+            proc = subprocess.run(
+                [str(BIN / "ub"), action, "--help"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("ub " + action, proc.stdout)
+        proc = subprocess.run(
+            [str(BIN / "ub"), "nonexistent"], check=False, capture_output=True
+        )
+        self.assertEqual(proc.returncode, 2)
+        for name in ["ubtm", "ubta"]:
+            self.assertEqual(
+                subprocess.run(
+                    [str(BIN / name), "--help"], check=False, capture_output=True
+                ).returncode,
+                0,
+            )
+
+    def test_remove_help_does_not_require_fzf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for utility in ["bash", "readlink", "realpath", "dirname", "grep", "cat"]:
+                path = shutil.which(utility)
+                if path:
+                    (Path(directory) / utility).symlink_to(path)
+            env = dict(os.environ, PATH=directory)
+            result = subprocess.run(
+                [str(BIN / "ub"), "remove", "--help"],
+                check=False,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ub remove", result.stdout)
+
+    def test_bash_completion_contains_only_the_current_feature_commands(self):
+        output = subprocess.run(
+            [str(BIN / "ub"), "completion", "bash"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        script = (
+            output
+            + '\nCOMP_WORDS=(ub ai ""); COMP_CWORD=2; _ub_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+        )
+        proc = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=True
+        )
+        self.assertIn("status", proc.stdout)
+        self.assertIn("install", proc.stdout)
+        self.assertNotIn("backup", output)
+        for shell in ["zsh", "fish"]:
+            self.assertEqual(
+                subprocess.run(
+                    [str(BIN / "ub"), "completion", shell],
+                    check=False,
+                    capture_output=True,
+                ).returncode,
+                0,
+            )
+
+    def test_official_fallback_list_still_has_alternative_mirrors(self):
+        args = argparse.Namespace(arch="amd64", mirror=None, timeout=1, limit=8)
+        with patch.object(
+            mirror, "fetch", return_value=b"http://archive.ubuntu.com/ubuntu/\n"
+        ):
+            urls = mirror.candidate_urls(args)
+        self.assertEqual(len(urls), 3)
+        self.assertIn("https://mirrors.tuna.tsinghua.edu.cn/ubuntu", urls)
+        self.assertIn("https://mirrors.ustc.edu.cn/ubuntu", urls)
+
+
+class AITests(unittest.TestCase):
+    def test_fresh_install_dry_run_does_not_download_or_execute(self):
+        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+            ai, "fetch"
+        ) as fetch, patch.object(ai, "execute") as execute, redirect_stdout(
+            io.StringIO()
+        ) as output:
+            self.assertEqual(ai.main(["install", "--all", "--dry-run"]), 0)
+        self.assertIn("https://chatgpt.com/codex/install.sh", output.getvalue())
+        self.assertIn("https://claude.ai/install.sh", output.getvalue())
+        self.assertIn("https://opencode.ai/install", output.getvalue())
+        fetch.assert_not_called()
+        execute.assert_not_called()
+
+    def test_npm_and_native_updates_use_the_existing_method(self):
+        self.assertEqual(
+            ai.plan(
+                "codex", ai.Installation("/bin/codex", "npm", "@openai/codex"), "update"
+            ),
+            [["npm", "install", "--global", "@openai/codex@latest"]],
+        )
+        self.assertEqual(
+            ai.plan("claude", ai.Installation("/bin/claude", "native"), "update"),
+            [["/bin/claude", "update"]],
+        )
+        self.assertEqual(
+            ai.plan("opencode", ai.Installation("/bin/opencode", "native"), "update"),
+            [["/bin/opencode", "upgrade", "--method", "curl"]],
+        )
+        with self.assertRaises(ValueError):
+            ai.plan("codex", ai.Installation("/some/wrapper", "unmanaged"), "update")
+
+    def test_distribution_owner_takes_precedence_over_node_modules(self):
+        found = "/tmp/node_modules/@openai/codex/bin/codex.js"
+
+        def which(name):
+            return (
+                found
+                if name == "codex"
+                else "/bin/dpkg-query"
+                if name == "dpkg-query"
+                else None
+            )
+
+        result = subprocess.CompletedProcess([], 0, "codex: " + found + "\n", "")
+        with patch.object(ai.shutil, "which", side_effect=which), patch.object(
+            ai, "run", return_value=result
+        ):
+            self.assertEqual(ai.detect("codex").method, "apt")
+
+    def test_declined_install_does_not_execute(self):
+        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+            ai, "confirm", return_value=False
+        ), patch.object(ai, "execute") as execute, redirect_stdout(io.StringIO()):
+            self.assertEqual(ai.main(["install", "codex"]), 0)
+        execute.assert_not_called()
+
+    def test_missing_clients_are_skipped_on_update(self):
+        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+            ai, "execute"
+        ) as execute, redirect_stdout(io.StringIO()):
+            self.assertEqual(ai.main(["update", "--all"]), 0)
+        execute.assert_not_called()
+
+    def test_offline_status_does_not_query_versions_online(self):
+        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+            ai, "fetch"
+        ) as fetch, redirect_stdout(io.StringIO()):
+            self.assertEqual(ai.main(["status"]), 0)
+            self.assertEqual(ai.main(["doctor", "--offline"]), 0)
+        fetch.assert_not_called()
+
+    def test_official_script_runs_as_file_and_rejects_html(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "installed"
+            data = f'#!/bin/sh\nprintf installed > "{marker}"\n'.encode()
+            steps = ai.plan("codex", ai.Installation(), "install")
+            with patch.object(ai, "fetch", return_value=data) as fetch:
+                ai.execute(steps, 1)
+                fetch.assert_called_once_with(
+                    ai.TOOLS["codex"]["url"], timeout=1, limit=2 * 1024 * 1024
+                )
+            self.assertEqual(marker.read_text(), "installed")
+            with patch.object(
+                ai, "fetch", return_value=b"<html>error</html>"
+            ), self.assertRaises(ValueError):
+                ai.execute(steps, 1)
+
+
+@unittest.skipUnless(shutil.which("gpg") and shutil.which("gpgv"), "GnuPG unavailable")
+class MirrorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = tempfile.TemporaryDirectory()
+        cls.base = Path(cls.fixture.name)
+        cls.gpg_home = cls.base / "gnupg"
+        cls.gpg_home.mkdir(mode=0o700)
+        prefix = [
+            "gpg",
+            "--homedir",
+            str(cls.gpg_home),
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+        ]
+        subprocess.run(
+            prefix
+            + ["--quick-generate-key", "ubtools test fixture", "ed25519", "sign", "0"],
+            check=True,
+            capture_output=True,
+        )
+        exported = subprocess.run(
+            prefix + ["--export"], check=True, capture_output=True
+        ).stdout
+        cls.keyring = cls.base / "ubuntu-archive-keyring.gpg"
+        cls.keyring.write_bytes(exported)
+        cls.index = b"Package: test-package\nVersion: 1.0\n" * 2048
+        cls.releases = {}
+        for kind in ["fresh", "stale", "expired", "wrongarch"]:
+            for suite in ["noble", "noble-updates"]:
+                content = cls.index if kind != "stale" else b"old package index"
+                release = (
+                    f"Origin: Ubuntu\nSuite: {suite}\nCodename: noble\n"
+                    f"Architectures: {'arm64' if kind == 'wrongarch' else 'amd64'}\n"
+                    f"Date: Mon, 01 Jan 2024 00:00:00 UTC\n"
+                    f"Valid-Until: {'Mon, 01 Jan 2001' if kind == 'expired' else 'Wed, 01 Jan 2070'} 00:00:00 UTC\n"
+                    f"SHA256:\n {hashlib.sha256(content).hexdigest()} {len(content)} main/binary-amd64/Packages\n"
+                )
+                file = cls.base / f"{kind}-{suite}"
+                file.write_text(release)
+                output = cls.base / (file.name + ".signed")
+                subprocess.run(
+                    prefix
+                    + ["--armor", "--output", str(output), "--clearsign", str(file)],
+                    check=True,
+                    capture_output=True,
+                )
+                cls.releases[kind, suite] = output.read_bytes()
+        owner = cls
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                parts = self.path.split("/")
+                if len(parts) < 5:
+                    self.send_error(404)
+                    return
+                kind, suite = parts[1], parts[3]
+                mapping = {
+                    "reference": "fresh",
+                    "fast": "fresh",
+                    "slow": "fresh",
+                    "bad": "fresh",
+                    "stale": "stale",
+                    "expired": "expired",
+                    "wrongarch": "wrongarch",
+                }
+                if kind not in mapping or suite not in {"noble", "noble-updates"}:
+                    self.send_error(404)
+                    return
+                if self.path.endswith("/InRelease"):
+                    data = owner.releases[mapping[kind], suite]
+                    if kind == "bad":
+                        data = data.replace(b"Origin: Ubuntu", b"Origin: BadTest")
+                else:
+                    if kind == "slow":
+                        time.sleep(0.08)
+                    data = owner.index
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.url = f"http://127.0.0.1:{cls.server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+        subprocess.run(
+            ["gpgconf", "--homedir", str(cls.gpg_home), "--kill", "gpg-agent"],
+            check=False,
+            capture_output=True,
+        )
+        cls.fixture.cleanup()
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.apt = self.root / "apt"
+        (self.apt / "sources.list.d").mkdir(parents=True)
+        self.source = self.apt / "sources.list.d/ubuntu.sources"
+        self.original = (
+            b"# Ubuntu archive\nTypes: deb deb-src\nURIs: http://archive.ubuntu.com/ubuntu\n"
+            b"Suites: noble\n noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n"
+            b"Types: deb\nURIs: http://security.ubuntu.com/ubuntu\nSuites: noble-security\nComponents: main\n\n"
+            b"Types: deb\nURIs: https://vendor.example/apt\nSuites: noble\nComponents: main\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n"
+            b"Enabled: no\nTypes: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n"
+        )
+        self.source.write_bytes(self.original)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        apt_get = self.bin / "apt-get"
+        apt_get.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_APT_LOG"\nexit "${TEST_APT_EXIT:-0}"\n'
+        )
+        apt_get.chmod(0o755)
+        self.env = patch.dict(
+            os.environ,
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+            TEST_APT_LOG=str(self.root / "apt.log"),
+            TEST_APT_EXIT="0",
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.args = [
+            "--apt-dir",
+            str(self.apt),
+            "--state-dir",
+            str(self.root / "state"),
+            "--keyring",
+            str(self.keyring),
+            "--reference",
+            self.url + "/reference",
+            "--arch",
+            "amd64",
+            "--timeout",
+            "2",
+        ]
+
+    def call(self, *args):
+        with redirect_stdout(io.StringIO()) as output:
+            result = mirror.main([*args, *self.args])
+        self.assertEqual(result, 0)
+        return output.getvalue()
+
+    def test_signed_fastest_mirror_wins_without_modifying_sources(self):
+        output = self.call(
+            "test",
+            "--mirror",
+            self.url + "/slow",
+            "--mirror",
+            self.url + "/fast",
+            "--json",
+        )
+        results = json.loads(output)
+        self.assertEqual(results[0]["url"], self.url + "/fast")
+        self.assertTrue(all(item["ok"] for item in results))
+        self.assertEqual(self.source.read_bytes(), self.original)
+        self.assertFalse((self.root / "apt.log").exists())
+
+    def test_invalid_signature_stale_expired_and_wrong_arch_are_rejected(self):
+        candidates = []
+        for kind in ["fast", "bad", "stale", "expired", "wrongarch"]:
+            candidates += ["--mirror", self.url + "/" + kind]
+        output = self.call("test", *candidates, "--json")
+        rows = json.loads(output)
+        self.assertEqual(sum(item["ok"] for item in rows), 1)
+        self.assertEqual(rows[0]["url"], self.url + "/fast")
+
+    def test_auto_backs_up_changes_only_ubuntu_and_restore_is_exact(self):
+        self.call("auto", "--mirror", self.url + "/fast", "--yes")
+        changed = self.source.read_text()
+        self.assertIn(self.url + "/fast", changed)
+        self.assertIn("http://security.ubuntu.com/ubuntu", changed)
+        self.assertIn("https://vendor.example/apt", changed)
+        self.assertIn(
+            "Enabled: no\nTypes: deb\nURIs: http://archive.ubuntu.com/ubuntu", changed
+        )
+        self.assertIn(
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg", changed
+        )
+        self.assertIn("Dir::State::lists=", (self.root / "apt.log").read_text())
+        self.call("restore", "--yes")
+        self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_failed_apt_update_rolls_back_sources(self):
+        with patch.dict(os.environ, TEST_APT_EXIT="1"), redirect_stdout(
+            io.StringIO()
+        ), self.assertRaises(RuntimeError):
+            mirror.main(["auto", "--mirror", self.url + "/fast", "--yes", *self.args])
+        self.assertEqual(self.source.read_bytes(), self.original)
+        manifest = next((self.root / "state").glob("*/manifest.json"))
+        self.assertTrue(json.loads(manifest.read_text())["restored"])
+
+    def test_auto_dry_run_does_not_change_sources_or_create_backups(self):
+        self.call("auto", "--mirror", self.url + "/fast", "--dry-run")
+        self.assertEqual(self.source.read_bytes(), self.original)
+        self.assertFalse((self.root / "state").exists())
+        self.assertFalse((self.root / "apt.log").exists())
+
+    def test_restore_refuses_subsequent_manual_changes(self):
+        self.call("auto", "--mirror", self.url + "/fast", "--yes")
+        self.source.write_bytes(self.source.read_bytes() + b"\n# manual edit\n")
+        with self.assertRaises(ValueError), redirect_stdout(io.StringIO()):
+            mirror.main(["restore", "--yes", *self.args])
+        self.assertIn(b"# manual edit", self.source.read_bytes())
+
+    def test_legacy_sources_preserve_options_comments_and_third_party(self):
+        self.source.unlink()
+        file = self.apt / "sources.list"
+        original = "# original\ndeb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main # keep\ndeb https://vendor.example/apt stable main\n"
+        file.write_text(original)
+        self.call("auto", "--mirror", self.url + "/fast", "--yes")
+        self.assertIn(
+            f"deb [arch=amd64] {self.url}/fast noble main # keep", file.read_text()
+        )
+        self.assertIn("deb https://vendor.example/apt stable main", file.read_text())
+        self.call("restore", "--yes")
+        self.assertEqual(file.read_text(), original)
+
+
+if __name__ == "__main__":
+    unittest.main()
