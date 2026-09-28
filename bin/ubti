@@ -121,6 +121,15 @@ if [[ "${1:-}" == "--preview-package" ]]; then
     exit 0
 fi
 
+# Keep the streaming producer and tee in one process group so exiting the UI
+# also stops any outstanding package-manager/network requests.
+if [[ "${1:-}" == "--stream-list" ]]; then
+    list_file="$2"
+    shift 2
+    "$0" "$@" | tee "$list_file"
+    exit 0
+fi
+
 # --- 0. 内部生成器拦截 (由 fzf reload 或后台进程触发) ---
 if [[ "${1:-}" == "--generate-list" ]]; then
     FORCE_REFRESH="$2"
@@ -137,21 +146,27 @@ if [[ "${1:-}" == "--generate-list" ]]; then
         function ellipsize(s, n) {
             return (length(s) > n) ? substr(s, 1, n - 1) "~" : s
         }
-        FNR==NR { installed[$1]=1; next }
+        FILENAME==ARGV[1] { installed[$1]=1; next }
         {
             status = ($2 in installed) ? ci " ✔ " label r : ""
             src = ellipsize($1, 18)
             pkg = ellipsize($2, 42)
             ver = ellipsize($3, 22)
             printf "%s%-18s%s %-42s %-22s %s\t%s\t%s\n", c, src, r, pkg, ver, status, $1, $2
+            fflush()
         }
     '
 
-    dpkg-query -W -f '${binary:Package}\n' 2>/dev/null > "$INSTALLED_LIST" || true
-    flatpak list --user --app --columns=application 2>/dev/null >> "$INSTALLED_LIST" || true
-    flatpak list --system --app --columns=application 2>/dev/null >> "$INSTALLED_LIST" || true
+    : > "$INSTALLED_LIST"
+    if [[ "$SHOW_APT" == true ]] && command -v dpkg-query >/dev/null 2>&1; then
+        dpkg-query -W -f '${binary:Package}\n' 2>/dev/null >> "$INSTALLED_LIST" || true
+    fi
+    if [[ "$SHOW_FLATPAK" == true ]] && command -v flatpak >/dev/null 2>&1; then
+        timeout --foreground --kill-after=2s 5s flatpak list --user --app --columns=application 2>/dev/null >> "$INSTALLED_LIST" || true
+        timeout --foreground --kill-after=2s 5s flatpak list --system --app --columns=application 2>/dev/null >> "$INSTALLED_LIST" || true
+    fi
 
-    if [[ "$SHOW_APT" == true ]]; then
+    if [[ "$SHOW_APT" == true ]] && command -v apt >/dev/null 2>&1; then
         apt list 2>/dev/null | awk -v c='\033[34m' -v ci='\033[32m' -v r='\033[0m' \
             -v label="$MSG_INSTALLED" '
             NR==1 || /^WARNING/ { next }
@@ -170,55 +185,60 @@ if [[ "${1:-}" == "--generate-list" ]]; then
             "$AWK_CMD" "$INSTALLED_LIST" -
     fi
 
-    if [[ "$SHOW_SNAP" == true ]] && command -v snap >/dev/null 2>&1; then
-        NEED_UPDATE=false
-        if [[ "$FORCE_REFRESH" == true ]] || [[ ! -s "$SNAP_CACHE" ]]; then
-            NEED_UPDATE=true
-        elif [[ $(find "$SNAP_CACHE" -mmin +$((CACHE_TIME / 60)) 2>/dev/null) ]]; then
-            NEED_UPDATE=true
-        fi
-        if [[ "$NEED_UPDATE" == true ]]; then
-            snap find 2>/dev/null | tail -n +2 | awk '{print "snap", $1, $2}' > "${SNAP_CACHE}.tmp" 2>/dev/null || true
-            if [[ -s "${SNAP_CACHE}.tmp" ]]; then
-                mv "${SNAP_CACHE}.tmp" "$SNAP_CACHE"
-            else
-                rm -f "${SNAP_CACHE}.tmp"
+    # Show cached rows before checking remote services. Expired caches stay
+    # usable while a bounded refresh prepares the next launch; Ctrl+R requests
+    # fresh rows in this session. Never replace a good cache on a failed fetch.
+    refresh_catalog() (
+        local src="$1" cache="$2" tmp
+        tmp="$(mktemp "${cache}.XXXXXX")"
+        trap 'rm -f "$tmp"' EXIT
+        if [[ "$src" == snap ]]; then
+            if ! timeout --foreground --kill-after=2s 15s snap find 2>/dev/null | awk 'NR > 1 {print "snap", $1, $2}' > "$tmp"; then
+                rm -f "$tmp"
+                return 0
+            fi
+        else
+            if ! timeout --foreground --kill-after=2s 15s flatpak remote-ls --user flathub --app --columns=application,version 2>/dev/null \
+                | awk -F'\t' '{print "flatpak", $1, ($2 == "" ? "-" : $2)}' > "$tmp"; then
+                if ! timeout --foreground --kill-after=2s 15s flatpak remote-ls --system flathub --app --columns=application,version 2>/dev/null \
+                    | awk -F'\t' '{print "flatpak", $1, ($2 == "" ? "-" : $2)}' > "$tmp"; then
+                    rm -f "$tmp"
+                    return 0
+                fi
             fi
         fi
-        if [[ -s "$SNAP_CACHE" ]]; then
-            awk -v c='\033[35m' -v ci='\033[32m' -v r='\033[0m' \
-                -v label="$MSG_INSTALLED" \
-                "$AWK_CMD" "$INSTALLED_LIST" "$SNAP_CACHE"
+        if [[ -s "$tmp" ]]; then
+            mv "$tmp" "$cache"
+        else
+            rm -f "$tmp"
         fi
-    fi
+    )
 
-    if [[ "$SHOW_FLATPAK" == true ]] && command -v flatpak >/dev/null 2>&1; then
-        NEED_UPDATE=false
-        if [[ "$FORCE_REFRESH" == true ]] || [[ ! -s "$FLATPAK_CACHE" ]]; then
-            NEED_UPDATE=true
-        elif [[ $(find "$FLATPAK_CACHE" -mmin +$((CACHE_TIME / 60)) 2>/dev/null) ]]; then
-            NEED_UPDATE=true
+    show_catalog() {
+        local src="$1" cache="$2" color="$3" showed_cache=false
+        if [[ "$FORCE_REFRESH" != true && -s "$cache" ]]; then
+            awk -v c="$color" -v ci='\033[32m' -v r='\033[0m' \
+                -v label="$MSG_INSTALLED" "$AWK_CMD" "$INSTALLED_LIST" "$cache"
+            showed_cache=true
         fi
-        if [[ "$NEED_UPDATE" == true ]]; then
-            if flatpak remote-ls --user flathub --app --columns=application,version 2>/dev/null \
-                | awk -F'\t' '{print "flatpak", $1, $2}' > "${FLATPAK_CACHE}.tmp" 2>/dev/null; then
-                :
-            elif flatpak remote-ls --system flathub --app --columns=application,version 2>/dev/null \
-                | awk -F'\t' '{print "flatpak", $1, $2}' > "${FLATPAK_CACHE}.tmp" 2>/dev/null; then
-                :
-            fi
-            if [[ -s "${FLATPAK_CACHE}.tmp" ]]; then
-                mv "${FLATPAK_CACHE}.tmp" "$FLATPAK_CACHE"
-            else
-                rm -f "${FLATPAK_CACHE}.tmp"
-            fi
+        if [[ "$FORCE_REFRESH" == true || ! -s "$cache" ]] \
+            || [[ -n "$(find "$cache" -mmin +$((CACHE_TIME / 60)) 2>/dev/null)" ]]; then
+            refresh_catalog "$src" "$cache"
         fi
-        if [[ -s "$FLATPAK_CACHE" ]]; then
-            awk -v c='\033[36m' -v ci='\033[32m' -v r='\033[0m' \
-                -v label="$MSG_INSTALLED" \
-                "$AWK_CMD" "$INSTALLED_LIST" "$FLATPAK_CACHE"
+        if [[ "$showed_cache" == false && -s "$cache" ]]; then
+            awk -v c="$color" -v ci='\033[32m' -v r='\033[0m' \
+                -v label="$MSG_INSTALLED" "$AWK_CMD" "$INSTALLED_LIST" "$cache"
         fi
+    }
+
+    # A slow remote must not hold up another source's cached rows.
+    if [[ "$SHOW_SNAP" == true ]] && command -v snap >/dev/null 2>&1; then
+        show_catalog snap "$SNAP_CACHE" '\033[35m' &
     fi
+    if [[ "$SHOW_FLATPAK" == true ]] && command -v flatpak >/dev/null 2>&1; then
+        show_catalog flatpak "$FLATPAK_CACHE" '\033[36m' &
+    fi
+    wait
     exit 0
 fi
 
@@ -265,7 +285,7 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[DESC]="模糊搜索并安装软件包 (支持 APT / Snap / Flatpak)。"
     MSG[OPTS]="选项："
     MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
-    MSG[OPT_REFRESH]="  --refresh, -y 强制刷新 Snap 软件包本地缓存列表"
+    MSG[OPT_REFRESH]="  --refresh, -y 强制刷新 Snap / Flatpak 软件包缓存列表"
     MSG[OPT_EXACT]="  --exact, -e   关闭模糊匹配，使用精确匹配模式"
     MSG[OPT_SOURCES]="  --apt, --snap, --flatpak  选择数据源（可组合，默认全部展示）"
     MSG[FEAT]="功能特性："
@@ -283,7 +303,7 @@ else
     MSG[DESC]="Fuzzy search & install packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
     MSG[OPT_HELP]="  --help, -h    Show this help and exit"
-    MSG[OPT_REFRESH]="  --refresh, -y Force refresh Snap package cache list"
+    MSG[OPT_REFRESH]="  --refresh, -y Force refresh Snap / Flatpak package caches"
     MSG[OPT_EXACT]="  --exact, -e   Disable fuzzy matching and use exact matching mode"
     MSG[OPT_SOURCES]="  --apt, --snap, --flatpak  Select data sources (combinable, default: all)"
     MSG[FEAT]="Features:"
@@ -335,21 +355,42 @@ TMP_DIR=$(mktemp -d -t ubti_fzf.XXXXXX)
 TARGET_FILE="${TMP_DIR}/target"
 LIST_FILE="${TMP_DIR}/list"
 INSTALLED_LIST="${TMP_DIR}/installed"
+LIST_PIPE="${TMP_DIR}/stream"
+mkfifo "$LIST_PIPE"
+GENERATOR_PID=""
 mkdir -p "$CACHE_DIR"
 SNAP_CACHE="${CACHE_DIR}/snap_packages.txt"
 FLATPAK_CACHE="${CACHE_DIR}/flatpak_packages.txt"
 
 PREVIEW_CMD="line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); \"$SCRIPT_PATH\" --preview-package \"\$src\" \"\$pkg\""
 
+stop_generator() {
+    if [[ -n "$GENERATOR_PID" ]]; then
+        kill -- "-$GENERATOR_PID" 2>/dev/null || true
+        wait "$GENERATOR_PID" 2>/dev/null || true
+        GENERATOR_PID=""
+    fi
+}
 cleanup() {
+    stop_generator
     rm -rf "$TMP_DIR"
 }
 abort() { cleanup; exit 130; }
 trap cleanup EXIT
 trap abort INT TERM
 
-# --- 6. 数据生成器 ---
-"$SCRIPT_PATH" --generate-list "$FORCE_REFRESH" "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" > "$LIST_FILE" 2>/dev/null
+# --- 6. 数据生成器：后台流式加载，fzf 无需等待远程查询完成 ---
+start_generator() {
+    stop_generator
+    : > "$LIST_FILE"
+    setsid "$SCRIPT_PATH" --stream-list "$LIST_FILE" --generate-list \
+        "$FORCE_REFRESH" "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" \
+        "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" \
+        > "$LIST_PIPE" 2>/dev/null &
+    GENERATOR_PID=$!
+    FZF_INPUT="$LIST_PIPE"
+}
+start_generator
 
 # --- 7. 交互式 FZF 渲染 ---
 COLOR_BLUE=$'\033[34m'
@@ -392,7 +433,7 @@ while true; do
         --tiebreak=index \
         --header "$CURRENT_HEADER" \
         --query "$QUERY_TEXT" \
-        < "$LIST_FILE" \
+        < "$FZF_INPUT" \
         > "$TARGET_FILE"
     FZF_EXIT=$?
     set -e
@@ -415,6 +456,12 @@ while true; do
     fi
 
     if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
+        if kill -0 "$GENERATOR_PID" 2>/dev/null; then
+            FORCE_REFRESH=false
+            start_generator
+        else
+            FZF_INPUT="$LIST_FILE"
+        fi
         if [[ "$FZF_EXACT" == true ]]; then
             FZF_EXACT=false
         else
@@ -424,12 +471,14 @@ while true; do
     fi
 
     if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-r" ]]; then
-        "$SCRIPT_PATH" --generate-list true "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" > "$LIST_FILE" 2>/dev/null
+        FORCE_REFRESH=true
+        start_generator
         continue
     fi
 
     break
 done
+stop_generator
 
 # --- 8. 执行安装 ---
 if [[ $FZF_EXIT -eq 0 ]] && [[ -s "$TARGET_FILE" ]]; then
