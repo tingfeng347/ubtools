@@ -112,6 +112,64 @@ class UnifiedTests(unittest.TestCase):
 
 
 class AITests(unittest.TestCase):
+    def test_no_arguments_reaches_interactive_install_on_older_python(self):
+        original_get_values = argparse.ArgumentParser._get_values
+
+        def legacy_get_values(parser, action, values):
+            # Python 3.10 checks [] against choices for nargs="*".
+            if action.nargs == "*" and not values and action.choices is not None:
+                raise argparse.ArgumentError(action, "invalid choice: []")
+            return original_get_values(parser, action, values)
+
+        for argv in [None, []]:
+            with self.subTest(argv=argv), patch.object(
+                argparse.ArgumentParser, "_get_values", legacy_get_values
+            ), patch.object(sys, "argv", ["ubtools_ai.py"]), patch.object(
+                ai, "choose", return_value=list(ai.TOOLS)
+            ) as choose, patch.object(
+                ai, "detect", return_value=ai.Installation()
+            ), patch.object(ai, "confirm", return_value=False), patch.object(
+                ai, "execute"
+            ) as execute, redirect_stdout(io.StringIO()):
+                self.assertEqual(ai.main(argv), 0)
+                choose.assert_called_once_with("install")
+                execute.assert_not_called()
+
+    def test_unknown_tool_is_rejected_before_selection_or_installation(self):
+        with patch.object(ai, "choose") as choose, patch.object(
+            ai, "execute"
+        ) as execute, redirect_stdout(io.StringIO()), patch.object(
+            sys, "stderr", io.StringIO()
+        ) as error, self.assertRaises(SystemExit) as raised:
+            ai.main(["install", "unknown-client", "--dry-run"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("unknown tool", error.getvalue())
+        choose.assert_not_called()
+        execute.assert_not_called()
+
+    def test_interactive_selection_includes_three_tools_and_select_all_binding(self):
+        result = subprocess.CompletedProcess([], 0, "codex\nclaude\nopencode\n")
+        with patch.object(ai.shutil, "which", return_value="/bin/fzf"), patch.object(
+            ai, "run", return_value=result
+        ) as run:
+            self.assertEqual(ai.choose("install"), list(ai.TOOLS))
+        arguments, kwargs = run.call_args
+        self.assertIn("ctrl-a:select-all,ctrl-d:deselect-all", arguments[0])
+        self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\n")
+
+    @unittest.skipUnless(shutil.which("fzf"), "real fzf is unavailable")
+    def test_real_fzf_can_select_all_three_tools_for_install_preview(self):
+        with patch.dict(os.environ, FZF_DEFAULT_OPTS="--filter="), patch.object(
+            ai, "detect", return_value=ai.Installation()
+        ), patch.object(ai, "execute") as execute, patch.object(
+            ai, "fetch"
+        ) as fetch, redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(ai.main(["install", "--dry-run"]), 0)
+        for name in ai.TOOLS:
+            self.assertIn(f"{name}: missing", output.getvalue())
+        execute.assert_not_called()
+        fetch.assert_not_called()
+
     def test_fresh_install_dry_run_does_not_download_or_execute(self):
         with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
             ai, "fetch"
