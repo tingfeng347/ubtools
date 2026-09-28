@@ -391,8 +391,16 @@ exec /usr/bin/grep "$@"''',
         self.stub("flatpak", "printf 'flathub\\n'")
         self.stub(
             "curl",
-            '''url="$2"
-cp "$TEST_SOURCE_BIN/${url##*/}" "$4"''',
+            '''url=""; output=""
+while (( $# )); do
+    case "$1" in
+        --connect-timeout|--max-time|--retry|--retry-delay|--retry-max-time) shift;;
+        -o) output="$2"; shift;;
+        https://*) url="$1";;
+    esac
+    shift
+done
+cp "$TEST_SOURCE_BIN/${url##*/}" "$output"''',
         )
         standalone = self.root / "install.sh"
         standalone.write_bytes((BIN.parent / "install.sh").read_bytes())
@@ -413,6 +421,54 @@ cp "$TEST_SOURCE_BIN/${url##*/}" "$4"''',
             (BIN / "ubtools-common.bash").read_bytes(),
         )
         self.assertEqual(len(list(install_dir.iterdir())), 13)
+
+    def test_stalled_download_reports_file_and_exits_without_touching_installation(
+        self,
+    ):
+        self.stub(
+            "grep",
+            '''if [[ "$*" == *ubuntu* && "$*" == */etc/os-release* ]]; then exit 0; fi
+exec /usr/bin/grep "$@"''',
+        )
+        self.stub("flatpak", "printf 'flathub\\n'")
+        # A stalled request exits only when the caller configured a curl deadline.
+        self.stub(
+            "curl",
+            """if [[ " $* " == *" --max-time "* ]]; then exit 28; fi
+exec sleep 30""",
+        )
+        standalone = self.root / "install.sh"
+        standalone.write_bytes((BIN.parent / "install.sh").read_bytes())
+        install_dir = self.root / "installed"
+        install_dir.mkdir()
+        (install_dir / "ubti").write_text("existing installation")
+        env = dict(self.env, BIN_DIR=str(install_dir))
+        proc = subprocess.Popen(
+            ["bash", str(standalone)],
+            env=env,
+            text=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            try:
+                stdout, stderr = proc.communicate("n\n", timeout=2)
+            except subprocess.TimeoutExpired:
+                self.fail("Installer hangs at stage 3 when a download stalls")
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[1/13]", stdout)
+            self.assertIn("ub", stderr)
+            self.assertIn("28", stderr)
+            self.assertEqual(
+                (install_dir / "ubti").read_text(), "existing installation"
+            )
+            self.assertEqual(len(list(install_dir.iterdir())), 1)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
 
     @unittest.skipUnless(shutil.which("fzf"), "real fzf is unavailable")
     def test_real_fzf_selection_routes_to_dry_run_update(self):
