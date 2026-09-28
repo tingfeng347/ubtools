@@ -15,6 +15,14 @@ BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APT_UPDATED=0
 
+run_as_root() {
+    if [[ "$EUID" -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local yn=""
@@ -29,6 +37,7 @@ prompt_yes_no() {
 }
 
 ensure_sudo() {
+    [[ "$EUID" -ne 0 ]] || return 0
     echo -e "  需要 sudo 权限安装依赖，如提示请输入当前用户密码。"
     sudo -v
 }
@@ -39,7 +48,7 @@ apt_update_once() {
     fi
 
     echo -e "  正在更新 APT 索引（如果网络较慢，这一步可能需要几分钟）..."
-    sudo apt-get \
+    run_as_root apt-get \
         -o Acquire::http::Timeout=30 \
         -o Acquire::https::Timeout=30 \
         -o Acquire::Retries=2 \
@@ -51,7 +60,7 @@ apt_update_once() {
 apt_install_packages() {
     echo -e "  正在安装: $*"
     apt_update_once
-    sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y "$@"
+    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y "$@"
 }
 
 # --- 检查是否为 Ubuntu ---
@@ -171,17 +180,33 @@ if [[ "$NEED_DOWNLOAD" == true ]]; then
     trap 'rm -rf "$UBTOOLS_INSTALL_TMP"' EXIT
     mkdir -p "$UBTOOLS_INSTALL_TMP/bin"
     echo -e "  正在下载脚本..."
+    DOWNLOAD_INDEX=0
     for file in "${FILES[@]}"; do
-        curl -fsSL "$RAW_BASE/bin/$file" -o "$UBTOOLS_INSTALL_TMP/bin/$file"
+        DOWNLOAD_INDEX=$((DOWNLOAD_INDEX + 1))
+        echo "  [$DOWNLOAD_INDEX/${#FILES[@]}] 下载 $file（单次最多 30 秒，失败重试 1 次）..."
+        if curl -fsSL --connect-timeout 10 --max-time 30 \
+            --retry 1 --retry-delay 1 --retry-max-time 65 \
+            "$RAW_BASE/bin/$file" -o "$UBTOOLS_INSTALL_TMP/bin/$file"; then
+            echo "    ✓ 下载完成"
+        else
+            status=$?
+            echo "下载失败: $file (curl exit $status)" >&2
+            echo "地址: $RAW_BASE/bin/$file" >&2
+            echo '现有安装未修改。请检查 GitHub Raw 连通性后重试。' >&2
+            exit "$status"
+        fi
     done
     SCRIPT_DIR="$UBTOOLS_INSTALL_TMP"
 fi
-sudo mkdir -p "$BIN_DIR"
+echo "  下载/本地文件准备完成，写入 $BIN_DIR..."
+run_as_root mkdir -p "$BIN_DIR"
 for cmd in "${COMMANDS[@]}"; do
-    sudo install -m 755 "$SCRIPT_DIR/bin/$cmd" "$BIN_DIR/$cmd"
+    echo "  安装 $cmd..."
+    run_as_root install -m 755 "$SCRIPT_DIR/bin/$cmd" "$BIN_DIR/$cmd"
 done
 for file in "${HELPERS[@]}"; do
-    sudo install -m 644 "$SCRIPT_DIR/bin/$file" "$BIN_DIR/$file"
+    echo "  安装 $file..."
+    run_as_root install -m 644 "$SCRIPT_DIR/bin/$file" "$BIN_DIR/$file"
 done
 echo -e "  ${GREEN}✓${RESET} 已安装"
 
