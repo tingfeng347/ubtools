@@ -196,8 +196,10 @@ def choose(action):
             "--layout=reverse",
             "--border",
             "--height=60%",
+            "--bind",
+            "ctrl-a:select-all,ctrl-d:deselect-all",
             "--header",
-            "Tab: multi-select | Enter: select | Esc: exit",
+            "Tab: multi-select | Ctrl+A: select all | Ctrl+D: clear | Enter: continue | Esc: exit",
         ],
         input="\n".join(candidates) + "\n",
         text=True,
@@ -215,6 +217,14 @@ def choose(action):
     )
 
 
+def tool_name(value):
+    if value not in TOOLS:
+        raise argparse.ArgumentTypeError(
+            f"unknown tool: {value}; choose from {', '.join(TOOLS)}"
+        )
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="ub ai",
@@ -226,7 +236,10 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="action")
     for action in ["install", "update", "status", "doctor"]:
         item = sub.add_parser(action)
-        item.add_argument("tools", nargs="*", choices=list(TOOLS))
+        # Validate each supplied value; choices + nargs="*" rejects [] on older Python.
+        item.add_argument(
+            "tools", nargs="*", type=tool_name, metavar="{codex,claude,opencode}"
+        )
         item.add_argument("--all", action="store_true")
         item.add_argument("--timeout", type=int, default=15)
         if action in {"install", "update"}:
@@ -240,9 +253,8 @@ def main(argv=None):
             )
         if action == "doctor":
             item.add_argument("--offline", action="store_true")
-    args = parser.parse_args(
-        argv if argv is not None else (sys.argv[1:] or ["install"])
-    )
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments or ["install"])
     if not args.action:
         parser.print_help()
         return 0
