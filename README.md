@@ -200,16 +200,34 @@ python3 -m unittest discover -s tests -v
 使用本地 HTTP 服务和临时 GPG 签名验证镜像排名、过期/失效签名拒绝、换源回滚与精确恢复；
 AI 安装使用临时脚本验证，不安装真实客户端。有 `fzf` 时会在伪终端里验证实际渲染与选包。
 
-## 卸载
+## 卸载 ubtools
+
+独立卸载脚本可以直接运行，无需先克隆仓库，也适用于只安装过 `ubti` / `ubtr` 的旧版本：
 
 ```bash
-bash uninstall.sh
-# 或者
 curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash
 ```
 
-删除 `ub`、兼容命令及共享文件，可选择删除软件包列表缓存。
-镜像备份、AI 客户端及其配置保留。
+默认删除安装目录中的 `ub`、旧命令 `ubti/ubtr/ubtu/ubtd/ubtc/ubtm/ubta` 和共享文件，保留缓存。
+同时清理当前用户的软件包列表缓存：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --purge-cache
+```
+
+先预览或指定自定义安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --dry-run
+bash uninstall.sh --bin-dir /home/yourname/.local/bin
+```
+
+卸载不会删除系统依赖、已安装软件、AI 客户端及配置、镜像源及备份。
+需要清理旧版再安装新版时，先运行上面的卸载命令，再执行安装命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
+```
 
 实现参考：[APT 手册](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html)、
 [Ubuntu 镜像列表](https://ubuntu.com/docs/launchpad/developer/reference/services/ubuntu-mirrors-index/)、
