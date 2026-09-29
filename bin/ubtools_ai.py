@@ -345,7 +345,10 @@ def choose(action):
             "--bind",
             "ctrl-a:select-all,ctrl-d:deselect-all",
             "--header",
-            "Tab: multi-select | Ctrl+A: select all | Ctrl+D: clear | Enter: continue | Esc: exit",
+            text(
+                "Tab: 多选 | Ctrl+A: 全选 | Ctrl+D: 清除 | Enter: 继续 | Esc: 退出",
+                "Tab: Multi-select | Ctrl+A: Select all | Ctrl+D: Clear | Enter: Continue | Esc: Exit",
+            ),
         ],
         input="\n".join(candidates) + "\n",
         text=True,

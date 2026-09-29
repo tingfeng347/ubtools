@@ -150,13 +150,28 @@ class AITests(unittest.TestCase):
 
     def test_interactive_selection_includes_all_tools_and_select_all_binding(self):
         result = subprocess.CompletedProcess([], 0, "codex\nclaude\nopencode\npi\n")
-        with patch.object(ai.shutil, "which", return_value="/bin/fzf"), patch.object(
-            ai, "run", return_value=result
-        ) as run:
-            self.assertEqual(ai.choose("install"), list(ai.TOOLS))
-        arguments, kwargs = run.call_args
-        self.assertIn("ctrl-a:select-all,ctrl-d:deselect-all", arguments[0])
-        self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\npi\n")
+        for language, expected_header in [
+            (
+                "zh",
+                "Tab: 多选 | Ctrl+A: 全选 | Ctrl+D: 清除 | Enter: 继续 | Esc: 退出",
+            ),
+            (
+                "en",
+                "Tab: Multi-select | Ctrl+A: Select all | Ctrl+D: Clear | Enter: Continue | Esc: Exit",
+            ),
+        ]:
+            with self.subTest(language=language), patch.dict(
+                os.environ, UBTOOLS_LANG=language
+            ), patch.object(ai.shutil, "which", return_value="/bin/fzf"), patch.object(
+                ai, "run", return_value=result
+            ) as run:
+                self.assertEqual(ai.choose("install"), list(ai.TOOLS))
+            arguments, kwargs = run.call_args
+            self.assertIn("ctrl-a:select-all,ctrl-d:deselect-all", arguments[0])
+            self.assertEqual(
+                arguments[0][arguments[0].index("--header") + 1], expected_header
+            )
+            self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\npi\n")
 
     @unittest.skipUnless(shutil.which("fzf"), "real fzf is unavailable")
     def test_real_fzf_can_select_all_tools_for_install_preview(self):
