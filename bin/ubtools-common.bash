@@ -1,5 +1,14 @@
 # Shared helpers for ubtu, ubtd and ubtc. Installed beside the commands.
-source "$(dirname "${BASH_SOURCE[0]}")/ubtools-language.bash"
+LANGUAGE_HELPER="$(dirname "${BASH_SOURCE[0]}")/ubtools-language.bash"
+if [[ -r "$LANGUAGE_HELPER" ]]; then source "$LANGUAGE_HELPER"; else
+    UBTOOLS_LANG="${UBTOOLS_LANG:-}"
+    if [[ "$UBTOOLS_LANG" != en && "$UBTOOLS_LANG" != zh ]]; then
+        UBTOOLS_LANG=zh; language_file="${XDG_CONFIG_HOME:-$HOME/.config}/ubtools/language"
+        if [[ -r "$language_file" ]]; then IFS= read -r UBTOOLS_LANG < "$language_file" || true; fi
+    fi
+    [[ "$UBTOOLS_LANG" == en || "$UBTOOLS_LANG" == zh ]] || UBTOOLS_LANG=zh
+    export UBTOOLS_LANG
+fi
 UB_LANG="$UBTOOLS_LANG"
 export LC_ALL=C
 export SHELL=/bin/bash

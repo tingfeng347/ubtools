@@ -217,14 +217,19 @@ if [[ "$NEED_DOWNLOAD" == true ]]; then
 fi
 echo "  下载/本地文件准备完成，写入 $BIN_DIR..."
 run_as_root mkdir -p "$BIN_DIR"
-for cmd in "${COMMANDS[@]}"; do
-    echo "  安装 $cmd..."
-    run_as_root install -m 755 "$SCRIPT_DIR/bin/$cmd" "$BIN_DIR/$cmd"
-done
 for file in "${HELPERS[@]}"; do
     echo "  安装 $file..."
     run_as_root install -m 644 "$SCRIPT_DIR/bin/$file" "$BIN_DIR/$file"
 done
+for cmd in "${COMMANDS[@]}"; do
+    # Install the dispatcher last so an interrupted upgrade keeps the old
+    # entry point until all of its shared runtime files are in place.
+    if [[ "$cmd" == ub ]]; then continue; fi
+    echo "  安装 $cmd..."
+    run_as_root install -m 755 "$SCRIPT_DIR/bin/$cmd" "$BIN_DIR/$cmd"
+done
+echo "  安装 ub..."
+run_as_root install -m 755 "$SCRIPT_DIR/bin/ub" "$BIN_DIR/ub"
 echo -e "  ${GREEN}✓${RESET} 已安装"
 
 # --- 4. 初始化缓存 ---

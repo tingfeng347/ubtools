@@ -5,7 +5,16 @@
 set -euo pipefail
 
 SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
-source "${SCRIPT_PATH%/*}/ubtools-language.bash"
+LANGUAGE_HELPER="${SCRIPT_PATH%/*}/ubtools-language.bash"
+if [[ -r "$LANGUAGE_HELPER" ]]; then source "$LANGUAGE_HELPER"; else
+    UBTOOLS_LANG="${UBTOOLS_LANG:-}"
+    if [[ "$UBTOOLS_LANG" != en && "$UBTOOLS_LANG" != zh ]]; then
+        UBTOOLS_LANG=zh; language_file="${XDG_CONFIG_HOME:-$HOME/.config}/ubtools/language"
+        if [[ -r "$language_file" ]]; then IFS= read -r UBTOOLS_LANG < "$language_file" || true; fi
+    fi
+    [[ "$UBTOOLS_LANG" == en || "$UBTOOLS_LANG" == zh ]] || UBTOOLS_LANG=zh
+    export UBTOOLS_LANG
+fi
 export SHELL=$(grep -m 1 -E '^/.*/bash$' /etc/shells || echo "/bin/bash")
 
 ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"

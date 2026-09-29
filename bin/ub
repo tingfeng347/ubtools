@@ -2,7 +2,29 @@
 # Full command names dispatch through this entry point; short commands remain directly callable.
 set -euo pipefail
 ROOT="$(dirname "$(readlink -f "$0")")"
-source "$ROOT/ubtools-language.bash"
+if [[ -r "$ROOT/ubtools-language.bash" ]]; then
+    source "$ROOT/ubtools-language.bash"
+else
+    UBTOOLS_LANG="${UBTOOLS_LANG:-}"
+    if [[ "$UBTOOLS_LANG" != en && "$UBTOOLS_LANG" != zh ]]; then
+        UBTOOLS_LANG=zh
+        language_file="${XDG_CONFIG_HOME:-$HOME/.config}/ubtools/language"
+        if [[ -r "$language_file" ]]; then IFS= read -r UBTOOLS_LANG < "$language_file" || true; fi
+    fi
+    [[ "$UBTOOLS_LANG" == en || "$UBTOOLS_LANG" == zh ]] || UBTOOLS_LANG=zh
+    export UBTOOLS_LANG
+    ub_language_set() {
+        local value="$1" file directory temporary
+        case "$value" in zh|en) ;; *) return 2;; esac
+        file="${XDG_CONFIG_HOME:-$HOME/.config}/ubtools/language"
+        directory="${file%/*}"
+        mkdir -p -- "$directory"
+        temporary="$(mktemp "$directory/.language.XXXXXX")"
+        printf '%s\n' "$value" > "$temporary"
+        mv -f -- "$temporary" "$file"
+        export UBTOOLS_LANG="$value"
+    }
+fi
 help() {
     if [[ "$UBTOOLS_LANG" == en ]]; then
         cat <<HELP
