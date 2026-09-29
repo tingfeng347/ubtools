@@ -13,13 +13,26 @@ bash install.sh
 或者一键安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
+fetch_ubtools_script() {
+  local script="$1" tmp status
+  tmp="$(mktemp)" || return 1
+  if ! curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 \
+    "https://raw.githubusercontent.com/tingfeng347/ubtools/main/$script" -o "$tmp" &&
+    ! curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 \
+    "https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/$script" -o "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if bash "$tmp"; then status=0; else status=$?; fi
+  rm -f "$tmp"
+  return "$status"
+}
+fetch_ubtools_script install.sh
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
-一键安装会逐个显示 13 个文件的下载进度：连接超时 10 秒、单次请求最多 30 秒，失败重试一次。
-下载失败时退出并保留现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
-如果停在下载阶段，请检查 `raw.githubusercontent.com` 的网络连通性。
+一键安装先尝试 GitHub Raw，再回退到 jsDelivr；会逐个显示 13 个文件的下载进度。
+文件未完整下载时不会执行脚本或覆盖现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
 在源码目录也可以用 `./bin/ub` 代替下面的 `ub`，无需全局安装。
 
 ## 卸载
