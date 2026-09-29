@@ -18,6 +18,10 @@ ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
 export LC_ALL=C
 
 translate_preview_fields() {
+    if [[ "$UBTOOLS_LANG" == en ]]; then
+        cat
+        return
+    fi
     awk '
         BEGIN {
             map["Package"]="软件包";
@@ -83,7 +87,7 @@ show_apt_preview() {
     apt-cache show "$pkg" 2>/dev/null | head -80 > "$raw_file"
 
     desc_md5="$(awk -F': ' '/^Description-md5:/ { print $2; exit }' "$raw_file")"
-    if [[ -n "$desc_md5" ]]; then
+    if [[ "$UBTOOLS_LANG" == zh && -n "$desc_md5" ]]; then
         awk -v md5="$desc_md5" '
             BEGIN { found=0; printing=0 }
             /^Description-md5: / {
