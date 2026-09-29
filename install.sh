@@ -166,7 +166,7 @@ fi
 echo ""
 
 # --- 3. 安装脚本 ---
-echo -e "${CYAN}[3/4]${RESET} 安装 ub 和七个兼容命令 到 ${BIN_DIR}..."
+echo -e "${CYAN}[3/4]${RESET} 安装 ub 和七个缩写命令 到 ${BIN_DIR}..."
 COMMANDS=(ub ubti ubtr ubtu ubtd ubtc ubtm ubta)
 HELPERS=(ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py)
 FILES=("${COMMANDS[@]}" "${HELPERS[@]}")
@@ -232,4 +232,4 @@ echo -e "  ${CYAN}ub mirror test${RESET}     # 镜像源测速"
 echo -e "  ${CYAN}ub ai install${RESET}      # 多选安装 AI 工具"
 echo -e "  ${CYAN}ub --help${RESET}          # 查看全部命令"
 echo ""
-echo -e "原有 ubti / ubtr / ubtu / ubtd / ubtc / ubtm / ubta 命令仍可使用。"
+echo -e "缩写命令：ubti / ubtr / ubtu / ubtd / ubtc / ubtm / ubta。"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Standalone uninstaller; also removes legacy ubti/ubtr installations.
+# Standalone uninstaller for ubtools commands and shared files.
 set -euo pipefail
 
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
@@ -18,7 +18,7 @@ while (( $# )); do
             cat <<'HELP'
 Usage: bash uninstall.sh [--purge-cache] [--dry-run] [--bin-dir DIR]
 
-移除 ubtools 统一入口、旧命令和共享文件，默认保留缓存。
+移除 ubtools 统一入口、缩写命令和共享文件，默认保留缓存。
   --purge-cache  同时删除当前用户的软件包列表缓存
   --dry-run      只列出将删除的文件，不执行删除
   --bin-dir DIR  指定安装目录（默认 /usr/local/bin，也可设置 BIN_DIR）
