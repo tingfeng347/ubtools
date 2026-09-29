@@ -194,7 +194,7 @@ if [[ "$NEED_DOWNLOAD" == true ]]; then
         DOWNLOAD_READY=true
         for file in "${FILES[@]}"; do
             DOWNLOAD_INDEX=$((DOWNLOAD_INDEX + 1))
-            echo "  [$DOWNLOAD_INDEX/${#FILES[@]}] 下载 $file（单次最多 30 秒，失败重试 1 次）..."
+            echo "  [$DOWNLOAD_INDEX/${#FILES[@]}] 下载 $file..."
             target="$UBTOOLS_INSTALL_TMP/bin/$file"
             if curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 --retry-max-time 65 "$base/bin/$file" -o "$target" && [[ -s "$target" ]]; then
                 echo "    ✓ 下载完成"
