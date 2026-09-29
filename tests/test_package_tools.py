@@ -29,6 +29,7 @@ class PackageToolsTests(unittest.TestCase):
             os.environ,
             PATH=f"{self.bin}:{os.environ['PATH']}",
             XDG_CACHE_HOME=str(self.root / "cache"),
+            XDG_CONFIG_HOME=str(self.root / "config"),
             TEST_ROOT=str(self.root),
             LANG="C",
             LC_ALL="C",
@@ -226,15 +227,15 @@ printf 'local\\n' """,
         )
         proc = self.run_tool("ubtd", "--offline")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Remote connectivity", proc.stdout)
+        self.assertIn("远程连通性", proc.stdout)
         self.assertEqual(self.mutations(), "")
 
     def test_diagnostics_report_failure_timings_and_redact_urls(self):
         self.stub("curl", "exit 22")
         proc = self.run_tool("ubtd", "--apt")
         self.assertEqual(proc.returncode, 1, proc.stderr)
-        self.assertIn("FAIL", proc.stdout)
-        self.assertIn("APT HEAD: apt.example", proc.stdout)
+        self.assertIn("失败", proc.stdout)
+        self.assertIn("APT 网络探测：apt.example", proc.stdout)
         self.assertRegex(proc.stdout, r"\d+ms")
         self.assertNotIn("password", proc.stdout + proc.stderr)
 
@@ -420,7 +421,7 @@ cp "$TEST_SOURCE_BIN/${url##*/}" "$output"''',
             (install_dir / "ubtools-common.bash").read_bytes(),
             (BIN / "ubtools-common.bash").read_bytes(),
         )
-        self.assertEqual(len(list(install_dir.iterdir())), 13)
+        self.assertEqual(len(list(install_dir.iterdir())), 14)
 
     def test_stalled_download_reports_file_and_exits_without_touching_installation(
         self,
@@ -458,7 +459,7 @@ exec sleep 30""",
             except subprocess.TimeoutExpired:
                 self.fail("Installer hangs at stage 3 when a download stalls")
             self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("[1/13]", stdout)
+            self.assertIn("[1/14]", stdout)
             self.assertIn("ub", stderr)
             self.assertIn("28", stderr)
             self.assertEqual(

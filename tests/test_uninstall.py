@@ -58,6 +58,7 @@ class UninstallTests(unittest.TestCase):
             "ubta",
             "ubtools-completion.bash",
             "ubtools-common.bash",
+            "ubtools-language.bash",
             "ubtools_runtime.py",
             "ubtools_mirror.py",
             "ubtools_ai.py",

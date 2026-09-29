@@ -17,7 +17,7 @@ curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh | bas
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
-安装脚本会先尝试 GitHub Raw，再回退到 jsDelivr；会逐个显示 13 个文件的下载进度。
+安装脚本会先尝试 GitHub Raw，再回退到 jsDelivr；会逐个显示文件下载进度。
 文件未完整下载时不会执行脚本或覆盖现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
 在源码目录也可以用 `./bin/ub` 代替下面的 `ub`，无需全局安装。
 
@@ -56,6 +56,15 @@ ub help mirror
 ```
 
 完整命令和缩写命令均可直接使用，例如 `ub install` / `ubti`、`ub mirror` / `ubtm`。
+
+## 界面语言
+
+默认使用简体中文；设置会保存到当前用户配置中，并应用于完整命令和缩写命令：
+
+```bash
+ub setup en  # 切换为英文
+ub setup zh  # 切换为简体中文
+```
 
 ## 软件包安装、卸载和更新
 

@@ -28,12 +28,12 @@ fi
 ub_parse "$@"
 if [[ "$UB_HELP" == true ]]; then
     cat <<HELP
-Usage: ${UB_COMMAND_NAME:-ubtc} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
+$(ub_text '用法' 'Usage'): ${UB_COMMAND_NAME:-ubtc} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
 $(ub_text '预览并多选清理 APT 下载缓存、孤立依赖、Snap 旧修订和 Flatpak 闲置运行时。' 'Preview and select APT archives, orphan dependencies, disabled Snap revisions and unused Flatpak runtimes.')
   --list     $(ub_text '只列出清理入口，不执行清理' 'List cleanup actions without removing anything')
   --dry-run  $(ub_text '选择后只打印命令' 'Select and print commands without removing anything')
 $(ub_text 'Flatpak 闲置项的准确清单和空间由原生命令在最终确认前展示。' 'Flatpak shows its exact unused-ref plan and sizes before its final confirmation.')
-Tab: multi-select | Enter: review | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit
+$(ub_text 'Tab：多选 | Enter：预览并确认清理 | Ctrl+R：刷新 | Ctrl+E：精确/模糊 | Esc：退出' 'Tab: multi-select | Enter: review cleanup | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit')
 HELP
     exit 0
 fi

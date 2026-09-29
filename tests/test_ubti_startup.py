@@ -26,6 +26,7 @@ class StartupTests(unittest.TestCase):
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}',
                         XDG_CACHE_HOME=str(self.root / 'cache'),
+                        XDG_CONFIG_HOME=str(self.root / 'config'),
                         PROBE_ROOT=str(self.root))
         self.stub('dpkg-query', "printf 'vim\\n'")
         self.stub('apt', "printf 'Listing...\\nstable-vim/stable 1.0 amd64\\n'")

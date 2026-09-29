@@ -169,7 +169,7 @@ echo ""
 # --- 3. 安装脚本 ---
 echo -e "${CYAN}[3/4]${RESET} 安装 ub 和七个缩写命令 到 ${BIN_DIR}..."
 COMMANDS=(ub ubti ubtr ubtu ubtd ubtc ubtm ubta)
-HELPERS=(ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py)
+HELPERS=(ubtools-completion.bash ubtools-common.bash ubtools-language.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py)
 FILES=("${COMMANDS[@]}" "${HELPERS[@]}")
 DOWNLOAD_BASES=(
     "https://raw.githubusercontent.com/tingfeng347/ubtools/main"

@@ -9,7 +9,7 @@ while (( $# )); do
     case "$1" in
         --offline) OFFLINE=true; shift;;
         --timeout)
-            [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { ub_error '--timeout requires positive integer seconds'; exit 2; }
+            [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { ub_error "$(ub_text '--timeout 需要正整数秒数' '--timeout requires positive integer seconds')"; exit 2; }
             UB_TIMEOUT="$2"; shift 2;;
         *) ARGS+=("$1"); shift;;
     esac
@@ -17,7 +17,7 @@ done
 ub_parse "${ARGS[@]}"
 if [[ "$UB_HELP" == true ]]; then
     cat <<HELP
-Usage: ${UB_COMMAND_NAME:-ubtd} [--apt] [--snap] [--flatpak] [--offline] [--timeout SECONDS]
+$(ub_text '用法' 'Usage'): ${UB_COMMAND_NAME:-ubtd} [--apt] [--snap] [--flatpak] [--offline] [--timeout SECONDS]
 $(ub_text '只读诊断：依赖、锁占用、索引、缓存年龄、源连通性以及各步骤耗时。' 'Read-only checks: dependencies, locks, indexes, cache age, remote connectivity and stage timings.')
   --offline  $(ub_text '仅检查本地环境，不访问远程源' 'Check local state without contacting remotes')
   --timeout  $(ub_text '每项查询的超时秒数（默认 15）' 'Timeout per query in seconds (default 15)')
@@ -26,11 +26,45 @@ HELP
     exit 0
 fi
 if [[ "$UB_LIST" == true || "$UB_DRY_RUN" == true || "$UB_EXACT" == true || ${#UB_QUERY[@]} -gt 0 || -n "$UB_GENERATE" ]]; then
-    ub_error 'ubtd accepts only source flags, --offline and --timeout'; exit 2
+    ub_error "$(ub_text 'ubtd 只接受数据源选项、--offline 和 --timeout。' 'ubtd accepts only source flags, --offline and --timeout.')"; exit 2
 fi
 ub_init
 FAILED=0
-report() { printf '%-5s %-32s %8s  %s\n' "$1" "$2" "$3" "${4:-}"; }
+report() {
+    local state="$1" label="$2" duration="$3" detail="${4:-}"
+    if [[ "$UB_LANG" == zh ]]; then
+        case "$state" in OK) state=正常;; WARN) state=警告;; FAIL) state=失败;; SKIP) state=跳过;; esac
+        case "$label" in
+            dependency:*) label="依赖：${label#dependency: }";;
+            'APT local indexes') label='APT 软件包索引';;
+            'APT installed state') label='APT 已安装状态';;
+            'APT update list') label='APT 可更新列表';;
+            'dpkg audit output') label='dpkg 检查结果';;
+            'APT index targets') label='APT 索引目标';;
+            'APT connectivity') label='APT 网络连通性';;
+            'APT HEAD:'*) label="APT 网络探测：${label#APT HEAD: }";;
+            'Remote connectivity') label='远程连通性';;
+            'Snap daemon/version') label='Snap 服务和版本';;
+            'Snap installed list') label='Snap 已安装软件';;
+            'Snap refresh candidates') label='Snap 可更新软件';;
+            'snap cache') label='Snap 缓存';;
+            'flatpak cache') label='Flatpak 缓存';;
+            'Flatpak user remotes') label='Flatpak 用户远程源';;
+            'Flatpak system remotes') label='Flatpak 系统远程源';;
+            'Flatpak user installed') label='Flatpak 用户已安装应用';;
+            'Flatpak system installed') label='Flatpak 系统已安装应用';;
+            'Flatpak user connectivity') label='Flatpak 用户源连通性';;
+            'Flatpak system connectivity') label='Flatpak 系统源连通性';;
+            'Flatpak user remote query') label='Flatpak 用户源更新查询';;
+            'Flatpak system remote query') label='Flatpak 系统源更新查询';;
+        esac
+        detail="${detail//missing/缺失}"
+        detail="${detail//unavailable/不可用}"
+        detail="${detail//offline/离线}"
+        detail="${detail//no remotes/未配置远程源}"
+    fi
+    printf '%-5s %-32s %8s  %s\n' "$state" "$label" "$duration" "$detail"
+}
 probe() {
     local label="$1" start elapsed code=0; shift
     start=$(date +%s%3N)

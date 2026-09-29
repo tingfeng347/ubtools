@@ -360,7 +360,7 @@ def test_mirrors(args):
                 results.append(item)
                 if not args.json:
                     print(
-                        f"{'OK' if item['ok'] else 'FAIL':4} {item['speed'] / 1024:10.1f} KiB/s  {item['url']}  {item['error']}",
+                        f"{text('正常' if item['ok'] else '失败', 'OK' if item['ok'] else 'FAIL'):4} {item['speed'] / 1024:10.1f} KiB/s  {item['url']}  {item['error']}",
                         flush=True,
                     )
     results.sort(key=lambda item: (not item["ok"], -item["speed"]))
@@ -625,7 +625,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        print(f"Error: {error}", file=sys.stderr)
+        print(text(f"错误：{error}", f"Error: {error}"), file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)

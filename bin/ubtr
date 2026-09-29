@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
+source "${SCRIPT_PATH%/*}/ubtools-language.bash"
 export SHELL=$(grep -m 1 -E '^/.*/bash$' /etc/shells || echo "/bin/bash")
 
 ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
@@ -174,7 +175,9 @@ FZF_EXACT=false
 QUERY_ARGS=()
 
 declare -A MSG
-if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
+if [[ "$UBTOOLS_LANG" == zh ]]; then
+    MSG[USAGE]="用法"
+    MSG[DESC_TITLE]="说明"
     MSG[DESC]="统一模糊搜索并卸载系统软件包 (支持 APT / Snap / Flatpak)。"
     MSG[OPTS]="选项："
     MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
@@ -184,12 +187,16 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[FEAT_2]="- 彻底与安全：apt purge 彻底清除配置，snap remove 原生安全，flatpak uninstall 快捷卸载"
     MSG[FEAT_3]="- 视觉标识：蓝色(APT) | 紫色(Snap) | 青色(Flatpak)"
     MSG[EX]="示例："
+    MSG[EX1]="搜索并卸载所有来源的软件"
+    MSG[EX2]="列出所有已安装软件"
     MSG[ERR_FZF]="错误：未找到 fzf，请先安装 (sudo apt install fzf)。"
     MSG[REMOVING_APT]=">> 准备卸载 (APT)："
     MSG[REMOVING_SNAP]=">> 准备卸载 (Snap)："
     MSG[REMOVING_FLATPAK]=">> 准备卸载 (Flatpak)："
     MSG[HEADER]="Tab:多选 | Enter:卸载 | Ctrl+R:刷新 | Ctrl+E:精确/模糊 | Esc:退出"
 else
+    MSG[USAGE]="Usage"
+    MSG[DESC_TITLE]="Description"
     MSG[DESC]="Unified fuzzy search & remove for system packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
     MSG[OPT_HELP]="  --help, -h    Show this help and exit"
@@ -199,6 +206,8 @@ else
     MSG[FEAT_2]="- Safe & Clean: apt purge removes configs, snap remove native protection, flatpak uninstall quick removal"
     MSG[FEAT_3]="- Visuals: Blue(APT) | Purple(Snap) | Cyan(Flatpak)"
     MSG[EX]="Example:"
+    MSG[EX1]="search and remove packages from all sources"
+    MSG[EX2]="list all installed packages"
     MSG[ERR_FZF]="Error: fzf not found. Install: sudo apt install fzf"
     MSG[REMOVING_APT]=">> Preparing to remove (APT):"
     MSG[REMOVING_SNAP]=">> Preparing to remove (Snap):"
@@ -218,13 +227,13 @@ done
 # --- 5. 帮助信息拦截 ---
 if [ "$SHOW_HELP" = true ]; then
     cat <<EOF
-Usage: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
+${MSG[USAGE]}: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
 
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
 ${MSG[OPT_EXACT]}
 
-Description:
+${MSG[DESC_TITLE]}:
   ${MSG[DESC]}
 
 ${MSG[FEAT]}
@@ -233,8 +242,8 @@ ${MSG[FEAT]}
   ${MSG[FEAT_3]}
 
 ${MSG[EX]}
-  ${UB_COMMAND_NAME:-${0##*/}} firefox        # search and remove across APT/Snap/Flatpak
-  ${UB_COMMAND_NAME:-${0##*/}}                # list all installed packages
+  ${UB_COMMAND_NAME:-${0##*/}} firefox        # ${MSG[EX1]}
+  ${UB_COMMAND_NAME:-${0##*/}}                # ${MSG[EX2]}
 EOF
     exit 0
 fi

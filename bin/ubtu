@@ -20,12 +20,12 @@ done
 ub_parse "${ARGS[@]}"
 if [[ "$UB_HELP" == true ]]; then
     cat <<HELP
-Usage: ${UB_COMMAND_NAME:-ubtu} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
+$(ub_text '用法' 'Usage'): ${UB_COMMAND_NAME:-ubtu} [--apt] [--snap] [--flatpak] [--list] [--dry-run] [-e] [query]
 $(ub_text '多选并更新软件包；显示当前版本 → 新版本。' 'Select updates; show current → new versions.')
   --list          $(ub_text '只列出更新，不启动 TUI' 'List updates without opening the TUI')
   --dry-run       $(ub_text '选择后只打印命令' 'Select and print commands without updating')
   --refresh-index $(ub_text '先更新 APT 索引（需要 sudo）' 'Refresh APT indexes first (requires sudo)')
-Tab: multi-select | Enter: update | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit
+$(ub_text 'Tab：多选 | Enter：更新 | Ctrl+R：刷新 | Ctrl+E：精确/模糊 | Esc：退出' 'Tab: multi-select | Enter: update | Ctrl+R: reload | Ctrl+E: exact/fuzzy | Esc: exit')
 HELP
     exit 0
 fi
@@ -97,9 +97,9 @@ ub_apply() {
 if [[ -n "$UB_GENERATE" ]]; then ub_generate | tee "$UB_GENERATE"; exit 0; fi
 if [[ "$REFRESH_INDEX" == true ]]; then
     if [[ "$UB_DRY_RUN" == true || "$UB_LIST" == true || "$UB_APT" == false ]]; then
-        ub_error '--refresh-index requires APT, and cannot be combined with --list or --dry-run'; exit 2
+        ub_error "$(ub_text '--refresh-index 需要启用 APT，且不能与 --list 或 --dry-run 同用。' '--refresh-index requires APT, and cannot be combined with --list or --dry-run.')"; exit 2
     fi
-    command -v apt-get >/dev/null || { ub_error 'apt-get not found'; exit 1; }
+    command -v apt-get >/dev/null || { ub_error "$(ub_text '未找到 apt-get。' 'apt-get not found.')"; exit 1; }
     ub_command sudo apt-get -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Acquire::Retries=0 update
 fi
 if [[ "$UB_LIST" == true ]]; then ub_generate; exit 0; fi

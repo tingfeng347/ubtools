@@ -435,7 +435,8 @@ def main(argv=None):
         if args.action == "doctor":
             for dependency in ["curl", "bash", "tar", "unzip"]:
                 ok = bool(shutil.which(dependency))
-                print(f"{'OK' if ok else 'FAIL'} dependency: {dependency}", flush=True)
+                state = text("正常" if ok else "失败", "OK" if ok else "FAIL")
+                print(f"{state} {text('依赖', 'dependency')}: {dependency}", flush=True)
                 failed |= not ok
             if not args.offline:
                 for name in names:
@@ -445,10 +446,13 @@ def main(argv=None):
                             timeout=args.timeout,
                             limit=2 * 1024 * 1024,
                         )
-                        print(f"OK {name} official download endpoint", flush=True)
+                        print(text(f"正常 {name} 官方下载地址", f"OK {name} official download endpoint"), flush=True)
                     except (OSError, ValueError) as error:
                         print(
-                            f"FAIL {name} download endpoint: {type(error).__name__}",
+                            text(
+                                f"失败 {name} 下载地址：{type(error).__name__}",
+                                f"FAIL {name} download endpoint: {type(error).__name__}",
+                            ),
                             flush=True,
                         )
                         failed = True
@@ -457,12 +461,17 @@ def main(argv=None):
     for name in names:
         found = detect(name)
         if args.action in {"update", "uninstall"} and not found.path:
-            print(f"SKIP {name}: not installed")
+            print(text(f"跳过 {name}：未安装", f"SKIP {name}: not installed"))
             continue
         steps = plan(
             name, found, args.action, args.yes if args.action == "uninstall" else False
         )
-        print(f"{name}: {found.method} → {args.action}", flush=True)
+        action_name = {
+            "install": text("安装", "install"),
+            "update": text("更新", "update"),
+            "uninstall": text("卸载", "uninstall"),
+        }[args.action]
+        print(f"{name}: {found.method} → {action_name}", flush=True)
         display_plan(steps)
         operations.append((name, steps))
     if not operations or args.dry_run:
@@ -480,7 +489,7 @@ def main(argv=None):
     for name, steps in operations:
         execute(steps, args.timeout)
         if args.action == "uninstall":
-            print(f"OK {name}: uninstalled; settings and data kept", flush=True)
+            print(text(f"正常 {name}：已卸载，设置和数据已保留", f"OK {name}: uninstalled; settings and data kept"), flush=True)
             continue
         found = detect(name)
         current, bad = version(found)
@@ -488,10 +497,10 @@ def main(argv=None):
             raise RuntimeError(
                 f"{name}: installation finished but version verification failed"
             )
-        print(f"OK {name}: {current} ({found.path})", flush=True)
+        print(text(f"正常 {name}：{current}（{found.path}）", f"OK {name}: {current} ({found.path})"), flush=True)
         print(text("登录/配置入口：", "Sign-in/configuration: ") + name)
         if shutil.which(name) != found.path:
-            print(f"PATH: add {Path(found.path).parent} to your shell PATH")
+            print(text(f"请将 {Path(found.path).parent} 添加到 PATH。", f"PATH: add {Path(found.path).parent} to your shell PATH"))
     return 0
 
 
@@ -499,7 +508,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        print(f"Error: {error}", file=sys.stderr)
+        print(text(f"错误：{error}", f"Error: {error}"), file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)

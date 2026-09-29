@@ -1,6 +1,6 @@
 # Shared helpers for ubtu, ubtd and ubtc. Installed beside the commands.
-UB_LANG="${UBTOOLS_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}}"
-export UBTOOLS_LANG="$UB_LANG"
+source "$(dirname "${BASH_SOURCE[0]}")/ubtools-language.bash"
+UB_LANG="$UBTOOLS_LANG"
 export LC_ALL=C
 export SHELL=/bin/bash
 UB_APT=true UB_SNAP=true UB_FLATPAK=true UB_SOURCE_SET=false
@@ -26,7 +26,7 @@ ub_parse() {
                 [[ $# -ge 2 ]] || return 2
                 UB_GENERATE="$2"; shift;;
             --) shift; UB_QUERY+=("$@"); break;;
-            -*) ub_error "Unknown option: $1"; return 2;;
+            -*) ub_error "$(ub_text "未知选项：$1" "Unknown option: $1")"; return 2;;
             *) UB_QUERY+=("$1");;
         esac
         shift

@@ -4,6 +4,7 @@
 # ==============================================================================
 set -euo pipefail
 
+source "$(dirname "$(readlink -f "$0")")/ubtools-language.bash"
 ORIGINAL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
 export LC_ALL=C
 
@@ -281,7 +282,13 @@ SCRIPT_PATH="$(realpath "$0" 2>/dev/null || echo "$0")"
 
 # --- 2. 本地化多语言字典 ---
 declare -A MSG
-if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
+if [[ "$UBTOOLS_LANG" == zh ]]; then
+    MSG[USAGE]="用法"
+    MSG[DESC_TITLE]="说明"
+    MSG[EX1]="搜索全部软件源"
+    MSG[EX2]="仅搜索 Flatpak"
+    MSG[EX3]="仅搜索 APT 和 Snap"
+    MSG[EX4]="强制刷新软件包缓存"
     MSG[DESC]="模糊搜索并安装软件包 (支持 APT / Snap / Flatpak)。"
     MSG[OPTS]="选项："
     MSG[OPT_HELP]="  --help, -h    显示此帮助信息并退出"
@@ -300,6 +307,12 @@ if [[ "$ORIGINAL_LANG" == *"zh_CN"* ]]; then
     MSG[EXEC]="> 正在执行: "
     MSG[HINT]="如需重试或记录，可复制以下命令："
 else
+    MSG[USAGE]="Usage"
+    MSG[DESC_TITLE]="Description"
+    MSG[EX1]="search all sources"
+    MSG[EX2]="search Flatpak only"
+    MSG[EX3]="search APT and Snap only"
+    MSG[EX4]="force refresh package caches"
     MSG[DESC]="Fuzzy search & install packages (APT / Snap / Flatpak)."
     MSG[OPTS]="Options:"
     MSG[OPT_HELP]="  --help, -h    Show this help and exit"
@@ -322,7 +335,7 @@ fi
 # --- 3. 帮助信息拦截 ---
 if [ "$SHOW_HELP" = true ]; then
     cat <<EOF
-Usage: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
+${MSG[USAGE]}: ${UB_COMMAND_NAME:-${0##*/}} [options] [query]
 
 ${MSG[OPTS]}
 ${MSG[OPT_HELP]}
@@ -330,7 +343,7 @@ ${MSG[OPT_REFRESH]}
 ${MSG[OPT_EXACT]}
 ${MSG[OPT_SOURCES]}
 
-Description:
+${MSG[DESC_TITLE]}:
   ${MSG[DESC]}
 
 ${MSG[FEAT]}
@@ -339,10 +352,10 @@ ${MSG[FEAT]}
   ${MSG[FEAT_3]}
 
 ${MSG[EX]}
-  ${UB_COMMAND_NAME:-${0##*/}} firefox              # search across all sources
-  ${UB_COMMAND_NAME:-${0##*/}} --flatpak firefox    # search flatpak only
-  ${UB_COMMAND_NAME:-${0##*/}} --apt --snap vim     # search APT + Snap only
-  ${UB_COMMAND_NAME:-${0##*/}} -y                   # force refresh cache
+  ${UB_COMMAND_NAME:-${0##*/}} firefox              # ${MSG[EX1]}
+  ${UB_COMMAND_NAME:-${0##*/}} --flatpak firefox    # ${MSG[EX2]}
+  ${UB_COMMAND_NAME:-${0##*/}} --apt --snap vim     # ${MSG[EX3]}
+  ${UB_COMMAND_NAME:-${0##*/}} -y                   # ${MSG[EX4]}
 EOF
     exit 0
 fi

@@ -2,29 +2,54 @@
 # Full command names dispatch through this entry point; short commands remain directly callable.
 set -euo pipefail
 ROOT="$(dirname "$(readlink -f "$0")")"
+source "$ROOT/ubtools-language.bash"
 help() {
-    cat <<HELP
+    if [[ "$UBTOOLS_LANG" == en ]]; then
+        cat <<HELP
 Usage: ub <command> [options]
 
-  install   搜索并安装软件 / Search and install packages
-  remove    搜索并卸载软件 / Search and remove packages
-  update    查看并更新软件 / Select package updates
-  doctor    环境、缓存和连通性诊断 / Diagnose package managers
-  clean     预览并清理空间 / Preview cleanup actions
-  mirror    镜像源测速与切换 / Test and switch Ubuntu mirrors
-  ai        AI 编程工具管理 / Manage Codex, Claude Code, OpenCode and Pi Agent
+  install   Search and install packages
+  remove    Search and remove packages
+  update    Review and apply package updates
+  doctor    Check environment, caches and connectivity
+  clean     Preview and clean disk space
+  mirror    Test and switch Ubuntu mirrors
+  ai        Manage AI coding tools
+  setup     Set language: ub setup zh|en
 
 Examples:
   ub install firefox
   ub update --dry-run
-  ub doctor --offline
-  ub clean --list
-  ub mirror test
-  ub ai install codex claude opencode pi --dry-run
+  ub mirror
+  ub ai install --all --dry-run
 
-Use ub <command> --help for details. Completion: ub completion bash|zsh|fish.
+Use 'ub <command> --help' for command help. Completion: ub completion bash|zsh|fish.
 Short commands: ubti ubtr ubtu ubtd ubtc ubtm ubta.
 HELP
+    else
+        cat <<HELP
+用法：ub <命令> [选项]
+
+  install   搜索并安装软件
+  remove    搜索并卸载软件
+  update    查看并更新软件
+  doctor    检查环境、缓存和连通性
+  clean     预览并清理空间
+  mirror    测速并切换 Ubuntu 镜像源
+  ai        管理 AI 编程工具
+  setup     设置界面语言：ub setup zh|en
+
+示例：
+  ub install firefox
+  ub update --dry-run
+  ub mirror
+  ub ai install --all --dry-run
+
+使用 ub <命令> --help 查看命令帮助。补全：ub completion bash|zsh|fish。
+缩写命令：ubti ubtr ubtu ubtd ubtc ubtm ubta。
+语言设置：ub setup zh（中文）或 ub setup en（英文）。
+HELP
+    fi
 }
 case "${1:-}" in
     ''|--help|-h) help; exit 0;;
@@ -35,10 +60,29 @@ case "${1:-}" in
         exec "$ROOT/ub" "$1" --help;;
 esac
 command_name="$1"; shift
+if [[ "$command_name" == setup ]]; then
+    case "${1:-}" in
+        zh|en)
+            if [[ $# != 1 ]]; then
+                if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Usage: ub setup zh|en' >&2; else echo '用法：ub setup zh|en' >&2; fi
+                exit 2
+            fi
+            ub_language_set "$1" || exit 2
+            if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Language set to English.'; else echo '界面语言已设置为简体中文。'; fi
+            ;;
+        --help|-h|'')
+            if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Usage: ub setup zh|en'; else echo '用法：ub setup zh|en'; fi
+            ;;
+        *)
+            if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Language must be zh or en.' >&2; else echo '语言参数只能是 zh 或 en。' >&2; fi
+            exit 2;;
+    esac
+    exit 0
+fi
 export UB_COMMAND_NAME="ub $command_name"
 case "$command_name" in
     completion)
-        [[ $# == 1 ]] || { echo 'Usage: ub completion bash|zsh|fish' >&2; exit 2; }
+        [[ $# == 1 ]] || { if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Usage: ub completion bash|zsh|fish' >&2; else echo '用法：ub completion bash|zsh|fish' >&2; fi; exit 2; }
         source "$ROOT/ubtools-completion.bash"
         ub_completion "$1";;
     install) exec "$ROOT/ubti" "$@";;
@@ -47,8 +91,13 @@ case "$command_name" in
     doctor) exec "$ROOT/ubtd" "$@";;
     clean) exec "$ROOT/ubtc" "$@";;
     mirror|ai)
-        command -v python3 >/dev/null || { echo 'Install python3 to use ub mirror / ub ai.' >&2; exit 1; }
+        if ! command -v python3 >/dev/null; then
+            if [[ "$UBTOOLS_LANG" == en ]]; then echo 'Install python3 to use ub mirror / ub ai.' >&2; else echo 'ub mirror / ub ai 需要安装 python3。' >&2; fi
+            exit 1
+        fi
         export PYTHONDONTWRITEBYTECODE=1
         exec python3 "$ROOT/ubtools_${command_name}.py" "$@";;
-    *) echo "Unknown command: $command_name. Run ub --help." >&2; exit 2;;
+    *)
+        if [[ "$UBTOOLS_LANG" == en ]]; then echo "Unknown command: $command_name. Run ub --help." >&2; else echo "未知命令：$command_name。运行 ub --help 查看帮助。" >&2; fi
+        exit 2;;
 esac

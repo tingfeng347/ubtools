@@ -12,12 +12,8 @@ from pathlib import Path
 
 
 def text(zh, en):
-    lang = (
-        os.environ.get("UBTOOLS_LANG")
-        or os.environ.get("LC_ALL")
-        or os.environ.get("LANG", "")
-    )
-    return zh if "zh" in lang else en
+    lang = os.environ.get("UBTOOLS_LANG", "zh")
+    return en if lang == "en" else zh
 
 
 def fetch(url, timeout=10, limit=4 * 1024 * 1024, headers=None, partial=False):

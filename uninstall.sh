@@ -46,7 +46,7 @@ remove_file() {
 }
 
 FOUND=false
-for file in ub ubti ubtr ubtu ubtd ubtc ubtm ubta ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py; do
+for file in ub ubti ubtr ubtu ubtd ubtc ubtm ubta ubtools-completion.bash ubtools-common.bash ubtools-language.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py; do
     target="$BIN_DIR/$file"
     if [[ -e "$target" || -L "$target" ]]; then
         remove_file "$target"
