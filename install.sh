@@ -170,7 +170,13 @@ echo -e "${CYAN}[3/4]${RESET} 安装 ub 和七个缩写命令 到 ${BIN_DIR}..."
 COMMANDS=(ub ubti ubtr ubtu ubtd ubtc ubtm ubta)
 HELPERS=(ubtools-completion.bash ubtools-common.bash ubtools_runtime.py ubtools_mirror.py ubtools_ai.py)
 FILES=("${COMMANDS[@]}" "${HELPERS[@]}")
-RAW_BASE="https://raw.githubusercontent.com/tingfeng347/ubtools/main"
+DOWNLOAD_BASES=(
+    "https://raw.githubusercontent.com/tingfeng347/ubtools/main"
+    "https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main"
+)
+if [[ -n "${UBTOOLS_DOWNLOAD_BASES:-}" ]]; then
+    read -r -a DOWNLOAD_BASES <<< "$UBTOOLS_DOWNLOAD_BASES"
+fi
 NEED_DOWNLOAD=false
 for file in "${FILES[@]}"; do
     if [[ ! -f "$SCRIPT_DIR/bin/$file" ]]; then NEED_DOWNLOAD=true; break; fi
@@ -178,24 +184,34 @@ done
 if [[ "$NEED_DOWNLOAD" == true ]]; then
     UBTOOLS_INSTALL_TMP="$(mktemp -d)"
     trap 'rm -rf "$UBTOOLS_INSTALL_TMP"' EXIT
-    mkdir -p "$UBTOOLS_INSTALL_TMP/bin"
-    echo -e "  正在下载脚本..."
-    DOWNLOAD_INDEX=0
-    for file in "${FILES[@]}"; do
-        DOWNLOAD_INDEX=$((DOWNLOAD_INDEX + 1))
-        echo "  [$DOWNLOAD_INDEX/${#FILES[@]}] 下载 $file（单次最多 30 秒，失败重试 1 次）..."
-        if curl -fsSL --connect-timeout 10 --max-time 30 \
-            --retry 1 --retry-delay 1 --retry-max-time 65 \
-            "$RAW_BASE/bin/$file" -o "$UBTOOLS_INSTALL_TMP/bin/$file"; then
-            echo "    ✓ 下载完成"
-        else
-            status=$?
-            echo "下载失败: $file (curl exit $status)" >&2
-            echo "地址: $RAW_BASE/bin/$file" >&2
-            echo '现有安装未修改。请检查 GitHub Raw 连通性后重试。' >&2
-            exit "$status"
-        fi
+    DOWNLOAD_READY=false
+    LAST_DOWNLOAD_STATUS=1
+    for base in "${DOWNLOAD_BASES[@]}"; do
+        rm -rf "$UBTOOLS_INSTALL_TMP/bin"
+        mkdir -p "$UBTOOLS_INSTALL_TMP/bin"
+        echo "  正在尝试下载源: $base"
+        DOWNLOAD_INDEX=0
+        DOWNLOAD_READY=true
+        for file in "${FILES[@]}"; do
+            DOWNLOAD_INDEX=$((DOWNLOAD_INDEX + 1))
+            echo "  [$DOWNLOAD_INDEX/${#FILES[@]}] 下载 $file（单次最多 30 秒，失败重试 1 次）..."
+            target="$UBTOOLS_INSTALL_TMP/bin/$file"
+            if curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 --retry-max-time 65 "$base/bin/$file" -o "$target" && [[ -s "$target" ]]; then
+                echo "    ✓ 下载完成"
+            else
+                status=$?
+                LAST_DOWNLOAD_STATUS=$status
+                echo "    下载源失败: $base/bin/$file (curl exit $status)" >&2
+                DOWNLOAD_READY=false
+                break
+            fi
+        done
+        if [[ "$DOWNLOAD_READY" == true ]]; then break; fi
     done
+    if [[ "$DOWNLOAD_READY" != true ]]; then
+        echo '所有下载源均失败，现有安装未修改。请检查网络后重试。' >&2
+        exit "$LAST_DOWNLOAD_STATUS"
+    fi
     SCRIPT_DIR="$UBTOOLS_INSTALL_TMP"
 fi
 echo "  下载/本地文件准备完成，写入 $BIN_DIR..."
