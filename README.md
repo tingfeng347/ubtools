@@ -10,24 +10,10 @@ cd ubtools
 bash install.sh
 ```
 
-或者一键安装：
+或者一行安装（GitHub Raw 失败时自动回退到 jsDelivr）：
 
 ```bash
-fetch_ubtools_script() {
-  local script="$1" tmp status
-  tmp="$(mktemp)" || return 1
-  if ! curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 \
-    "https://raw.githubusercontent.com/tingfeng347/ubtools/main/$script" -o "$tmp" &&
-    ! curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 \
-    "https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/$script" -o "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if bash "$tmp"; then status=0; else status=$?; fi
-  rm -f "$tmp"
-  return "$status"
-}
-fetch_ubtools_script install.sh
+(tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT && { curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh -o "$tmp" || curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh -o "$tmp"; } && bash "$tmp")
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
