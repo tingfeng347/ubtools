@@ -537,6 +537,7 @@ def restore(args):
 
 
 def main(argv=None):
+    supplied_args = list(argv) if argv is not None else sys.argv[1:]
     parser = argparse.ArgumentParser(
         prog="ub mirror",
         description=text(
@@ -571,7 +572,10 @@ def main(argv=None):
         "--reference", help="reference archive URL; default official Ubuntu archive"
     )
     parser.add_argument("--arch", default=architecture())
-    args = parser.parse_args(argv)
+    args = parser.parse_args(supplied_args)
+    # Bare `ub mirror` is the interactive flow: benchmark, then offer to switch.
+    # Explicit `test` stays read-only for scripts and diagnostics.
+    args.offer_switch = not supplied_args and not args.json
     args.keyring = args.keyring.resolve()
     args.apt_dir = args.apt_dir.resolve()
     args.state_dir = args.state_dir.resolve()
@@ -582,7 +586,7 @@ def main(argv=None):
     if args.json and args.action != "test":
         parser.error("--json is supported by test only")
     if (
-        args.action != "test"
+        (args.action != "test" or args.offer_switch)
         and not args.dry_run
         and args.apt_dir == Path("/etc/apt")
         and os.geteuid() != 0
@@ -593,7 +597,7 @@ def main(argv=None):
                 "sudo",
                 sys.executable,
                 str(Path(__file__).resolve()),
-                *(argv if argv is not None else sys.argv[1:]),
+                *supplied_args,
             ],
             timeout=None,
         ).returncode
@@ -610,7 +614,7 @@ def main(argv=None):
         else "",
         file=sys.stderr if args.json else sys.stdout,
     )
-    if args.action == "auto":
+    if args.action == "auto" or args.offer_switch:
         if not shutil.which("apt-get"):
             raise ValueError("apt-get is required to validate a switch")
         apply(entries, good[0]["url"], args)
