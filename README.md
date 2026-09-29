@@ -13,7 +13,7 @@ bash install.sh
 或者一行安装（GitHub Raw 失败时自动回退到 jsDelivr）：
 
 ```bash
-(tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT && { curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh -o "$tmp" || curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh -o "$tmp"; } && bash "$tmp")
+bash -c 'tmp=$(mktemp) || exit; trap "rm -f \"$tmp\"" EXIT; { curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh -o "$tmp" || curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh -o "$tmp"; } && bash "$tmp"'
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
