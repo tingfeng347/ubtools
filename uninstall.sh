@@ -2,6 +2,7 @@
 # Standalone uninstaller for ubtools commands and shared files.
 set -euo pipefail
 
+uninstall_ubtools() {
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ubti_tui"
 PURGE_CACHE=false
@@ -71,3 +72,6 @@ else
     echo 'ubtools 卸载完成。'
 fi
 echo '系统依赖、已安装软件、AI 客户端及配置、镜像源和 /var/lib/ubtools/mirror 备份保留。'
+}
+
+uninstall_ubtools "$@"

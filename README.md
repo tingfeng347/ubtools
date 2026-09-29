@@ -24,14 +24,14 @@ curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh | bas
 ## 卸载
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/uninstall.sh | bash
 ```
 
 卸载默认保留缓存。预览、同时清除缓存，或指定安装目录：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --dry-run
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --purge-cache
+curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/uninstall.sh | bash -s -- --dry-run
+curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/uninstall.sh | bash -s -- --purge-cache
 bash uninstall.sh --bin-dir /home/yourname/.local/bin
 ```
 
