@@ -90,11 +90,14 @@ def detect(name):
             package = "@mariozechner/pi-coding-agent"
         return Installation(found, method, package)
     if "/Cellar/" in value or "/Caskroom/" in value:
-        return Installation(found, "brew", "claude-code" if name == "claude" else name)
+        method = "brew-cask" if "/Caskroom/" in value else "brew"
+        return Installation(found, method, "claude-code" if name == "claude" else name)
     native_roots = [
         home / ".local/share/codex",
         home / ".local/share/claude",
         home / ".opencode/bin",
+        Path(os.environ.get("CODEX_HOME", str(home / ".codex")))
+        / "packages/standalone",
     ]
     if path == native.resolve() or any(within(path, root) for root in native_roots):
         return Installation(found, "native")
@@ -126,9 +129,92 @@ def latest(name, timeout):
     return value
 
 
-def plan(name, existing, action):
+def plan(name, existing, action, yes=False):
     method = existing.method
     package = existing.package
+    if action == "uninstall":
+        if method in {"npm", "pnpm", "bun"}:
+            command_name = {"npm": "npm", "pnpm": "pnpm", "bun": "bun"}[method]
+            verb = "uninstall" if method == "npm" else "remove"
+            return [[command_name, verb, "--global", package]]
+        if method == "apt":
+            privilege = [] if os.geteuid() == 0 else ["sudo"]
+            return [
+                [*privilege, "apt-get", "remove", *(["-y"] if yes else []), package]
+            ]
+        if method == "pacman":
+            privilege = [] if os.geteuid() == 0 else ["sudo"]
+            return [
+                [*privilege, "pacman", "-R", *(["--noconfirm"] if yes else []), package]
+            ]
+        if method in {"brew", "brew-cask"}:
+            return [
+                [
+                    "brew",
+                    "uninstall",
+                    *(["--cask"] if method == "brew-cask" else []),
+                    package,
+                ]
+            ]
+        if method in {"native", "unmanaged"} and name == "opencode":
+            home = Path.home()
+            launcher = Path(existing.path).expanduser()
+            official_launchers = {
+                home / ".local/bin/opencode",
+                home / ".opencode/bin/opencode",
+            }
+            if launcher not in official_launchers:
+                raise ValueError(
+                    f"opencode: {text('无法确认这是官方安装路径，拒绝自动删除', 'unrecognized OpenCode path; refusing automatic removal')}: {launcher}"
+                )
+            return [
+                [existing.path, "uninstall", "--force", "--keep-config", "--keep-data"],
+                ["@remove", str(launcher)],
+            ]
+        if method == "unmanaged":
+            raise ValueError(
+                f"{name}: {text('无法确定安装来源，拒绝自动删除', 'cannot determine installation source; refusing automatic removal')}: {existing.path}"
+            )
+        if method == "native" and name == "pi":
+            if not os.path.exists("/dev/tty"):
+                raise ValueError("Pi 官方卸载器需要交互式终端（TTY）")
+            return [["@pi-uninstaller", TOOLS[name]["url"], TOOLS[name]["shell"]]]
+        if method == "native" and name == "opencode":
+            return [
+                [existing.path, "uninstall", "--force", "--keep-config", "--keep-data"]
+            ]
+        if method == "native" and name == "claude":
+            home = Path.home()
+            launcher = Path(existing.path).expanduser()
+            share = home / ".local/share/claude"
+            if launcher.name != "claude" or not (
+                within(launcher, home / ".local/bin") or within(launcher, share)
+            ):
+                raise ValueError(
+                    f"claude: refusing to remove unexpected native path: {launcher}"
+                )
+            return [["@remove", str(launcher)], ["@remove-tree", str(share)]]
+        if method == "native" and name == "codex":
+            home = Path.home()
+            code_home = Path(
+                os.environ.get("CODEX_HOME", str(home / ".codex"))
+            ).expanduser()
+            launcher = Path(existing.path).expanduser()
+            install_dir = Path(
+                os.environ.get("CODEX_INSTALL_DIR", str(home / ".local/bin"))
+            ).expanduser()
+            runtime = code_home / "packages/standalone"
+            if launcher.name != "codex" or not (
+                within(launcher, install_dir)
+                or within(launcher, code_home / "packages/standalone")
+            ):
+                raise ValueError(
+                    f"codex: refusing to remove unexpected native path: {launcher}"
+                )
+            return [["@remove", str(launcher)], ["@remove-tree", str(runtime)]]
+        raise ValueError(
+            f"{name}: {text('暂不支持此安装方式的卸载', 'uninstall is not supported for this installation method')}: {existing.path}"
+        )
     if (
         name == "pi"
         and method in {"npm", "pnpm", "bun"}
@@ -149,8 +235,10 @@ def plan(name, existing, action):
             ["sudo", "apt-get", "update"],
             ["sudo", "apt-get", "install", "--only-upgrade", package],
         ]
-    if method == "brew":
-        return [["brew", "upgrade", *(["--cask"] if name == "claude" else []), package]]
+    if method in {"brew", "brew-cask"}:
+        return [
+            ["brew", "upgrade", *(["--cask"] if method == "brew-cask" else []), package]
+        ]
     if method in {"unmanaged", "pacman"}:
         raise ValueError(
             f"{name}: {text('无法确定安装来源，请使用原安装工具更新', 'unrecognized installation; update with its original manager')}: {existing.path}"
@@ -177,16 +265,34 @@ def plan(name, existing, action):
 
 def display_plan(steps):
     for step in steps:
-        if step[0] == "@installer":
+        if step[0] in {"@installer", "@pi-uninstaller"}:
             command(["curl", "-fL", step[1], "-o", "<installer-file>"])
             command([step[2], "<installer-file>", *step[3:]])
+            if step[0] == "@pi-uninstaller":
+                print(
+                    text(
+                        "安装器中按 U 选择卸载；Pi 配置和会话会保留。",
+                        "Press U in the installer to uninstall; Pi settings and sessions are kept.",
+                    ),
+                    flush=True,
+                )
+        elif step[0] in {"@remove", "@remove-tree"}:
+            command(["rm", "-f" if step[0] == "@remove" else "-rf", "--", step[1]])
         else:
             command(step)
 
 
 def execute(steps, timeout):
     for step in steps:
-        if step[0] == "@installer":
+        if step[0] in {"@installer", "@pi-uninstaller"}:
+            if step[0] == "@pi-uninstaller":
+                try:
+                    with open("/dev/tty", "r+"):
+                        pass
+                except OSError as error:
+                    raise RuntimeError(
+                        "Pi's official uninstaller needs an interactive TTY"
+                    ) from error
             data = fetch(step[1], timeout=timeout, limit=2 * 1024 * 1024)
             if not data.startswith(b"#!") or b"\x00" in data:
                 raise ValueError("official installer returned unexpected content")
@@ -198,6 +304,18 @@ def execute(steps, timeout):
                     # Ignore an inherited prerelease selector for a latest install.
                     env["CODEX_RELEASE"] = "latest"
                 result = run([step[2], str(script), *step[3:]], timeout=600, env=env)
+        elif step[0] in {"@remove", "@remove-tree"}:
+            target = Path(step[1]).expanduser()
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.is_dir():
+                if step[0] == "@remove-tree":
+                    shutil.rmtree(target)
+                else:
+                    raise RuntimeError(
+                        f"refusing to remove a directory as a launcher: {target}"
+                    )
+            result = subprocess.CompletedProcess(step, 0)
         else:
             result = run(step, timeout=600)
         if result.returncode:
@@ -262,7 +380,7 @@ def main(argv=None):
         ),
     )
     sub = parser.add_subparsers(dest="action")
-    for action in ["install", "update", "status", "doctor"]:
+    for action in ["install", "update", "uninstall", "status", "doctor"]:
         item = sub.add_parser(action)
         # Validate each supplied value; choices + nargs="*" rejects [] on older Python.
         item.add_argument(
@@ -270,7 +388,7 @@ def main(argv=None):
         )
         item.add_argument("--all", action="store_true")
         item.add_argument("--timeout", type=int, default=15)
-        if action in {"install", "update"}:
+        if action in {"install", "update", "uninstall"}:
             item.add_argument("--dry-run", action="store_true")
             item.add_argument("--yes", "-y", action="store_true")
         if action == "status":
@@ -291,7 +409,11 @@ def main(argv=None):
     if args.all and args.tools:
         parser.error("use tool names or --all, not both")
     names = args.tools or list(TOOLS)
-    if args.action in {"install", "update"} and not args.tools and not args.all:
+    if (
+        args.action in {"install", "update", "uninstall"}
+        and not args.tools
+        and not args.all
+    ):
         names = choose(args.action)
     failed = False
     if args.action in {"status", "doctor"}:
@@ -334,21 +456,32 @@ def main(argv=None):
     operations = []
     for name in names:
         found = detect(name)
-        if args.action == "update" and not found.path:
+        if args.action in {"update", "uninstall"} and not found.path:
             print(f"SKIP {name}: not installed")
             continue
-        steps = plan(name, found, args.action)
+        steps = plan(
+            name, found, args.action, args.yes if args.action == "uninstall" else False
+        )
         print(f"{name}: {found.method} → {args.action}", flush=True)
         display_plan(steps)
         operations.append((name, steps))
     if not operations or args.dry_run:
         return 0
     if not confirm(
-        text("执行以上安装/更新操作？", "Apply these installations/updates?"), args.yes
+        text(
+            "执行以上卸载操作？配置、凭据和会话将保留。",
+            "Uninstall the selected tools? Settings, credentials and sessions will be kept.",
+        )
+        if args.action == "uninstall"
+        else text("执行以上安装/更新操作？", "Apply these installations/updates?"),
+        args.yes,
     ):
         return 0
     for name, steps in operations:
         execute(steps, args.timeout)
+        if args.action == "uninstall":
+            print(f"OK {name}: uninstalled; settings and data kept", flush=True)
+            continue
         found = detect(name)
         current, bad = version(found)
         if not found.path or bad:
