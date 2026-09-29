@@ -160,9 +160,12 @@ ub mirror test --timeout 5 --limit 4
 
 ```bash
 ub ai                          # 多选安装，等同于 install
-ub ai install                  # 多选 Codex / Claude Code / OpenCode
-ub ai install codex claude opencode
+ub ai install                  # 多选 Codex / Claude Code / OpenCode / Pi Agent
+ub ai install codex claude opencode pi
 ub ai install --all --dry-run  # 只预览安装/更新计划
+ub ai install pi               # 单独安装 Pi Agent
+ub ai update pi                # 更新 Pi Agent
+ub ai status pi                # 查看 Pi 版本和安装来源
 ub ai update                   # 多选更新已安装的客户端
 ub ai update --all             # 更新全部已安装客户端
 ub ai status                   # 查看本机版本、位置和安装方式；不联网
@@ -178,8 +181,15 @@ ub ai doctor                  # 加上官方安装入口连通性检查
 无法可靠识别的安装以及由 Arch 包管理器管理的客户端，会提示用原安装工具更新，不创建重复安装。
 `status --latest` 标注的是 npm 渠道版本，可能与其他发布渠道不同。
 
-TUI 中按 `Tab` 多选，`Ctrl+A` 全选三个工具，`Ctrl+D` 取消全选，`Enter` 进入计划确认，`Esc` 退出。
-安装和更新先展示计划并确认；`--dry-run` 不下载或执行安装脚本，`--yes` 可跳过确认。
+Pi Agent 的命令名是 `pi`，新安装使用 [Pi 官方安装脚本](https://pi.dev/docs/latest/quickstart)。
+官方托管安装通过 `pi update` 更新；npm 安装沿用 npm，并使用当前包
+`@earendil-works/pi-coding-agent@latest` 和 `--ignore-scripts`。
+检测到旧的 `@mariozechner/pi-coding-agent` 安装时，按[官方迁移说明](https://pi.dev/changelog/2026/5/7/pi-has-a-new-home)
+执行两次 `pi update`，先更新旧发行版，再切换新包名。
+
+TUI 中按 `Tab` 多选，`Ctrl+A` 全选四个工具，`Ctrl+D` 取消全选，`Enter` 进入计划确认，`Esc` 退出。
+安装和更新先展示计划并确认；`--dry-run` 不下载或执行安装脚本，`--yes` 可跳过 ub 的计划确认。
+Pi 官方安装器可能继续询问 Node.js 运行时和安装方式，请按它的提示完成。
 没有 `fzf` 时可以直接指定客户端名称或 `--all`。
 工具不会写入 API Key、切换模型配置或清除客户端登录数据。
 

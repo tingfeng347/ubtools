@@ -30,6 +30,11 @@ TOOLS = {
         "url": "https://opencode.ai/install",
         "shell": "bash",
     },
+    "pi": {
+        "package": "@earendil-works/pi-coding-agent",
+        "url": "https://pi.dev/install.sh",
+        "shell": "sh",
+    },
 }
 
 
@@ -43,7 +48,12 @@ class Installation:
 def detect(name):
     home = Path.home()
     native = home / (".opencode/bin" if name == "opencode" else ".local/bin") / name
+    pi_root = Path(os.environ.get("PI_CODING_AGENT_DIR", str(home / ".pi/agent")))
     found = shutil.which(name)
+    if not found and name == "pi":
+        launcher = pi_root / "bin/pi"
+        if launcher.is_file() and os.access(launcher, os.X_OK):
+            found = str(launcher)
     # Installers cannot change this process's PATH; check their user locations too.
     if not found and native.is_file() and os.access(native, os.X_OK):
         found = str(native)
@@ -68,9 +78,17 @@ def detect(name):
             r"[a-z0-9][a-z0-9+_.-]*", result.stdout.strip()
         ):
             return Installation(found, "pacman", result.stdout.strip())
+    # Pi's managed installation contains node_modules but updates through pi itself.
+    if name == "pi" and (
+        within(path, pi_root / "bin") or within(path, pi_root / "install")
+    ):
+        return Installation(found, "native")
     if "/node_modules/" in value:
         method = "pnpm" if "/.pnpm/" in value else "bun" if "/.bun/" in value else "npm"
-        return Installation(found, method, TOOLS[name]["package"])
+        package = TOOLS[name]["package"]
+        if name == "pi" and "/node_modules/@mariozechner/pi-coding-agent/" in value:
+            package = "@mariozechner/pi-coding-agent"
+        return Installation(found, method, package)
     if "/Cellar/" in value or "/Caskroom/" in value:
         return Installation(found, "brew", "claude-code" if name == "claude" else name)
     native_roots = [
@@ -111,13 +129,21 @@ def latest(name, timeout):
 def plan(name, existing, action):
     method = existing.method
     package = existing.package
+    if (
+        name == "pi"
+        and method in {"npm", "pnpm", "bun"}
+        and package == "@mariozechner/pi-coding-agent"
+    ):
+        # Official migration may need one update to 0.73.1 before changing scope.
+        return [[existing.path, "update"], [existing.path, "update"]]
     if method in {"npm", "pnpm", "bun"}:
         verbs = {
             "npm": ["install", "--global"],
             "pnpm": ["add", "--global"],
             "bun": ["install", "--global"],
         }
-        return [[method, *verbs[method], package + "@latest"]]
+        flags = ["--ignore-scripts"] if name == "pi" and method == "npm" else []
+        return [[method, *verbs[method], *flags, package + "@latest"]]
     if method == "apt":
         return [
             ["sudo", "apt-get", "update"],
@@ -129,6 +155,8 @@ def plan(name, existing, action):
         raise ValueError(
             f"{name}: {text('无法确定安装来源，请使用原安装工具更新', 'unrecognized installation; update with its original manager')}: {existing.path}"
         )
+    if method == "native" and action == "update" and name == "pi":
+        return [[existing.path, "update"]]
     if method == "native" and action == "update" and name != "codex":
         return (
             [[existing.path, "update"]]
@@ -179,7 +207,7 @@ def execute(steps, timeout):
 def choose(action):
     fzf = shutil.which("fzf")
     if not fzf:
-        raise ValueError("fzf unavailable; specify codex/claude/opencode or --all")
+        raise ValueError("fzf unavailable; specify codex/claude/opencode/pi or --all")
     candidates = [name for name in TOOLS if action == "install" or detect(name).path]
     if not candidates:
         print(
@@ -229,8 +257,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="ub ai",
         description=text(
-            "管理 Codex、Claude Code 和 OpenCode。",
-            "Manage Codex, Claude Code and OpenCode.",
+            "管理 Codex、Claude Code、OpenCode 和 Pi Agent。",
+            "Manage Codex, Claude Code, OpenCode and Pi Agent.",
         ),
     )
     sub = parser.add_subparsers(dest="action")
@@ -238,7 +266,7 @@ def main(argv=None):
         item = sub.add_parser(action)
         # Validate each supplied value; choices + nargs="*" rejects [] on older Python.
         item.add_argument(
-            "tools", nargs="*", type=tool_name, metavar="{codex,claude,opencode}"
+            "tools", nargs="*", type=tool_name, metavar="{" + ",".join(TOOLS) + "}"
         )
         item.add_argument("--all", action="store_true")
         item.add_argument("--timeout", type=int, default=15)

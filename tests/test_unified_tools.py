@@ -88,6 +88,7 @@ class UnifiedTests(unittest.TestCase):
             ["bash", "-c", script], capture_output=True, text=True, check=True
         )
         self.assertIn("status", proc.stdout)
+        self.assertIn("pi", output)
         self.assertIn("install", proc.stdout)
         self.assertNotIn("backup", output)
         for shell in ["zsh", "fish"]:
@@ -147,18 +148,18 @@ class AITests(unittest.TestCase):
         choose.assert_not_called()
         execute.assert_not_called()
 
-    def test_interactive_selection_includes_three_tools_and_select_all_binding(self):
-        result = subprocess.CompletedProcess([], 0, "codex\nclaude\nopencode\n")
+    def test_interactive_selection_includes_all_tools_and_select_all_binding(self):
+        result = subprocess.CompletedProcess([], 0, "codex\nclaude\nopencode\npi\n")
         with patch.object(ai.shutil, "which", return_value="/bin/fzf"), patch.object(
             ai, "run", return_value=result
         ) as run:
             self.assertEqual(ai.choose("install"), list(ai.TOOLS))
         arguments, kwargs = run.call_args
         self.assertIn("ctrl-a:select-all,ctrl-d:deselect-all", arguments[0])
-        self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\n")
+        self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\npi\n")
 
     @unittest.skipUnless(shutil.which("fzf"), "real fzf is unavailable")
-    def test_real_fzf_can_select_all_three_tools_for_install_preview(self):
+    def test_real_fzf_can_select_all_tools_for_install_preview(self):
         with patch.dict(os.environ, FZF_DEFAULT_OPTS="--filter="), patch.object(
             ai, "detect", return_value=ai.Installation()
         ), patch.object(ai, "execute") as execute, patch.object(
@@ -180,8 +181,118 @@ class AITests(unittest.TestCase):
         self.assertIn("https://chatgpt.com/codex/install.sh", output.getvalue())
         self.assertIn("https://claude.ai/install.sh", output.getvalue())
         self.assertIn("https://opencode.ai/install", output.getvalue())
+        self.assertIn("https://pi.dev/install.sh", output.getvalue())
         fetch.assert_not_called()
         execute.assert_not_called()
+
+    def test_pi_install_and_update_plans_use_official_channels(self):
+        self.assertEqual(
+            ai.plan("pi", ai.Installation(), "install"),
+            [["@installer", "https://pi.dev/install.sh", "sh"]],
+        )
+        self.assertEqual(
+            ai.plan("pi", ai.Installation("/local/pi", "native"), "update"),
+            [["/local/pi", "update"]],
+        )
+        self.assertEqual(
+            ai.plan(
+                "pi",
+                ai.Installation("/bin/pi", "npm", "@earendil-works/pi-coding-agent"),
+                "update",
+            ),
+            [
+                [
+                    "npm",
+                    "install",
+                    "--global",
+                    "--ignore-scripts",
+                    "@earendil-works/pi-coding-agent@latest",
+                ]
+            ],
+        )
+        self.assertEqual(
+            ai.plan(
+                "pi",
+                ai.Installation("/bin/pi", "npm", "@mariozechner/pi-coding-agent"),
+                "update",
+            ),
+            [["/bin/pi", "update"], ["/bin/pi", "update"]],
+        )
+
+    def test_pi_managed_node_modules_install_is_detected_as_native(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            root = home / ".pi/agent"
+            executable = (
+                root
+                / "install/releases/1/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+            )
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+            launcher = home / ".local/bin/pi"
+            launcher.parent.mkdir(parents=True)
+            launcher.symlink_to(executable)
+            with patch.object(ai.Path, "home", return_value=home), patch.dict(
+                os.environ, PI_CODING_AGENT_DIR=str(root)
+            ), patch.object(
+                ai.shutil,
+                "which",
+                side_effect=lambda name: str(launcher) if name == "pi" else None,
+            ):
+                found = ai.detect("pi")
+            self.assertEqual(found.method, "native")
+            self.assertEqual(
+                ai.plan("pi", found, "update"), [[str(launcher), "update"]]
+            )
+
+    def test_pi_managed_launcher_outside_path_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launcher = root / "bin/pi"
+            launcher.parent.mkdir()
+            launcher.write_text("#!/bin/sh\nexit 0\n")
+            launcher.chmod(0o755)
+            with patch.dict(os.environ, PI_CODING_AGENT_DIR=str(root)), patch.object(
+                ai.shutil, "which", return_value=None
+            ):
+                found = ai.detect("pi")
+            self.assertEqual(found.path, str(launcher))
+            self.assertEqual(found.method, "native")
+
+    def test_pi_npm_detection_preserves_legacy_package_for_migration(self):
+        for package in [
+            "@mariozechner/pi-coding-agent",
+            "@earendil-works/pi-coding-agent",
+        ]:
+            executable = f"/tmp/node_modules/{package}/dist/cli.js"
+            with self.subTest(package=package), patch.object(
+                ai.shutil,
+                "which",
+                side_effect=lambda name, executable=executable: (
+                    executable if name == "pi" else None
+                ),
+            ):
+                found = ai.detect("pi")
+                self.assertEqual(found.method, "npm")
+                self.assertEqual(found.package, package)
+
+    def test_pi_dry_run_and_latest_version_query(self):
+        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+            ai, "fetch", return_value=b'{"version":"1.2.3"}'
+        ) as fetch, patch.object(ai, "execute") as execute, redirect_stdout(
+            io.StringIO()
+        ) as output:
+            self.assertEqual(ai.main(["install", "pi", "--dry-run"]), 0)
+            fetch.assert_not_called()
+            execute.assert_not_called()
+            self.assertEqual(ai.main(["status", "pi", "--latest"]), 0)
+        self.assertIn("https://pi.dev/install.sh", output.getvalue())
+        self.assertIn("npm-latest=1.2.3", output.getvalue())
+        self.assertEqual(
+            fetch.call_args.args[0],
+            "https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest",
+        )
 
     def test_npm_and_native_updates_use_the_existing_method(self):
         self.assertEqual(

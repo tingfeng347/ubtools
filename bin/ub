@@ -12,7 +12,7 @@ Usage: ub <command> [options]
   doctor    环境、缓存和连通性诊断 / Diagnose package managers
   clean     预览并清理空间 / Preview cleanup actions
   mirror    镜像源测速与切换 / Test and switch Ubuntu mirrors
-  ai        AI 编程工具管理 / Manage Codex, Claude Code and OpenCode
+  ai        AI 编程工具管理 / Manage Codex, Claude Code, OpenCode and Pi Agent
 
 Examples:
   ub install firefox
@@ -20,7 +20,7 @@ Examples:
   ub doctor --offline
   ub clean --list
   ub mirror test
-  ub ai install codex claude opencode --dry-run
+  ub ai install codex claude opencode pi --dry-run
 
 Use ub <command> --help for details. Completion: ub completion bash|zsh|fish. Legacy ubti/ubtr/ubtu/ubtd/ubtc/ubtm/ubta still work.
 HELP
