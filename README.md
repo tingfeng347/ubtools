@@ -127,7 +127,7 @@ Flatpak 的 TUI 预览展示已安装运行时，**不代表全部可清理**。
 ## 镜像源
 
 ```bash
-ub mirror                      # 默认等同于 test
+ub mirror                      # 测速后询问是否切换并刷新 APT 索引
 ub mirror test                 # 测速并输出结果
 ub mirror test --json          # JSON 格式结果
 ub mirror auto --dry-run       # 测速并预览换源，不修改配置
@@ -145,7 +145,9 @@ ub mirror restore              # 恢复最近一次尚未恢复的备份
 保留独立的 `security.ubuntu.com` 源。自动切换后运行 APT 索引更新验证；失败时恢复原源配置。
 备份存放在 `/var/lib/ubtools/mirror`，恢复时检查完整性，并拒绝覆盖换源后的手动修改。
 确认需要覆盖手动修改时可使用 `ub mirror restore --force`。
-`test` 和 `--dry-run` 无需 sudo；实际换源和恢复系统配置时使用 sudo。
+裸命令 `ub mirror` 会先完成测速，再询问是否备份并切换到最快可用源；确认后自动刷新 APT
+索引，失败会恢复原配置。回答否只会测速，不修改源。显式 `test` 始终只测速；`--json`
+适合脚本读取结果。`--dry-run` 无需 sudo；实际换源和恢复系统配置时使用 sudo。
 
 ```bash
 ub mirror test --mirror https://mirror.example/ubuntu  # 替换为实际镜像地址
