@@ -165,6 +165,9 @@ ub ai install codex claude opencode pi
 ub ai install --all --dry-run  # 只预览安装/更新计划
 ub ai install pi               # 单独安装 Pi Agent
 ub ai update pi                # 更新 Pi Agent
+ub ai uninstall                # 多选卸载已安装的 AI 工具
+ub ai uninstall pi             # 卸载单个工具
+ub ai uninstall --all --dry-run # 预览全部卸载命令
 ub ai status pi                # 查看 Pi 版本和安装来源
 ub ai update                   # 多选更新已安装的客户端
 ub ai update --all             # 更新全部已安装客户端
@@ -188,8 +191,13 @@ Pi Agent 的命令名是 `pi`，新安装使用 [Pi 官方安装脚本](https://
 执行两次 `pi update`，先更新旧发行版，再切换新包名。
 
 TUI 中按 `Tab` 多选，`Ctrl+A` 全选四个工具，`Ctrl+D` 取消全选，`Enter` 进入计划确认，`Esc` 退出。
-安装和更新先展示计划并确认；`--dry-run` 不下载或执行安装脚本，`--yes` 可跳过 ub 的计划确认。
+安装、更新和卸载先展示计划并确认；`--dry-run` 只预览命令，`--yes` 可跳过 ub 的计划确认。
 Pi 官方安装器可能继续询问 Node.js 运行时和安装方式，请按它的提示完成。
+`ub ai uninstall` 按已检测到的来源运行原包管理器或官方卸载方式；默认保留客户端配置、凭据和会话。
+OpenCode 通过官方 `opencode uninstall --keep-config --keep-data` 保留配置和会话；
+Pi 托管安装器需在其界面按 `U` 选择卸载。Pi 安装器仍会保留 `~/.pi/agent/` 数据。
+OpenCode、Pi 与 Codex 按各自的[官方 CLI 文档](https://opencode.ai/v2/docs/cli)、
+[官方卸载说明](https://pi.dev/docs/latest/quickstart)及[官方安装仓库](https://github.com/openai/codex)处理。
 没有 `fzf` 时可以直接指定客户端名称或 `--all`。
 工具不会写入 API Key、切换模型配置或清除客户端登录数据。
 
