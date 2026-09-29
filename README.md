@@ -10,14 +10,14 @@ cd ubtools
 bash install.sh
 ```
 
-或者一行安装（GitHub Raw 失败时自动回退到 jsDelivr）：
+或者一行安装：
 
 ```bash
-bash -c 'tmp=$(mktemp) || exit; trap "rm -f \"$tmp\"" EXIT; { curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh -o "$tmp" || curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 --retry-delay 1 https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh -o "$tmp"; } && bash "$tmp"'
+curl -fsSL https://cdn.jsdelivr.net/gh/tingfeng347/ubtools@main/install.sh | bash
 ```
 
 安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
-一键安装先尝试 GitHub Raw，再回退到 jsDelivr；会逐个显示 13 个文件的下载进度。
+安装脚本会先尝试 GitHub Raw，再回退到 jsDelivr；会逐个显示 13 个文件的下载进度。
 文件未完整下载时不会执行脚本或覆盖现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
 在源码目录也可以用 `./bin/ub` 代替下面的 `ub`，无需全局安装。
 

@@ -5,6 +5,7 @@
 # ==============================================================================
 set -euo pipefail
 
+install_ubtools() {
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
@@ -249,3 +250,6 @@ echo -e "  ${CYAN}ub ai install${RESET}      # 多选安装 AI 工具"
 echo -e "  ${CYAN}ub --help${RESET}          # 查看全部命令"
 echo ""
 echo -e "缩写命令：ubti / ubtr / ubtu / ubtd / ubtc / ubtm / ubta。"
+}
+
+install_ubtools "$@"
