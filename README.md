@@ -16,45 +16,31 @@ bash install.sh
 curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
 ```
 
-安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、兼容命令及共享文件。
+安装到 `${BIN_DIR:-/usr/local/bin}`。安装脚本部署统一入口、缩写命令及共享文件。
 一键安装会逐个显示 13 个文件的下载进度：连接超时 10 秒、单次请求最多 30 秒，失败重试一次。
 下载失败时退出并保留现有安装；root 用户直接写入安装目录，其他用户通过 sudo 安装。
 如果停在下载阶段，请检查 `raw.githubusercontent.com` 的网络连通性。
 在源码目录也可以用 `./bin/ub` 代替下面的 `ub`，无需全局安装。
 
-## 卸载 ubtools
-
-独立卸载脚本可以直接运行，无需先克隆仓库，也适用于只安装过 `ubti` / `ubtr` 的旧版本：
+## 卸载
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash
 ```
 
-默认删除安装目录中的 `ub`、旧命令 `ubti/ubtr/ubtu/ubtd/ubtc/ubtm/ubta` 和共享文件，保留缓存。
-同时清理当前用户的软件包列表缓存：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --purge-cache
-```
-
-先预览，或从本地源码执行卸载：
+卸载默认保留缓存。预览、同时清除缓存，或指定安装目录：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --dry-run
-bash uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/uninstall.sh | bash -s -- --purge-cache
 bash uninstall.sh --bin-dir /home/yourname/.local/bin
 ```
 
-卸载不会删除系统依赖、已安装软件、AI 客户端及配置、镜像源及备份。
-需要清理旧版再安装新版时，先运行上面的卸载命令，再执行安装命令：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/tingfeng347/ubtools/main/install.sh | bash
-```
+卸载只移除 ubtools 命令和共享文件；系统依赖、已安装软件、AI 工具及配置、镜像源及备份均保留。
 
 ## 命令
 
-| 功能 | 命令 | 兼容入口 |
+| 功能 | 完整命令 | 缩写 |
 |---|---|---|
 | 搜索并安装软件 | `ub install` | `ubti` |
 | 搜索并卸载软件 | `ub remove` | `ubtr` |
@@ -69,6 +55,8 @@ ub --help
 ub update --help
 ub help mirror
 ```
+
+完整命令和缩写命令均可直接使用，例如 `ub install` / `ubti`、`ub mirror` / `ubtm`。
 
 ## 软件包安装、卸载和更新
 

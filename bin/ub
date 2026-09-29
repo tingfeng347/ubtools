@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One public entry point; legacy commands remain available.
+# Full command names dispatch through this entry point; short commands remain directly callable.
 set -euo pipefail
 ROOT="$(dirname "$(readlink -f "$0")")"
 help() {
@@ -22,7 +22,8 @@ Examples:
   ub mirror test
   ub ai install codex claude opencode pi --dry-run
 
-Use ub <command> --help for details. Completion: ub completion bash|zsh|fish. Legacy ubti/ubtr/ubtu/ubtd/ubtc/ubtm/ubta still work.
+Use ub <command> --help for details. Completion: ub completion bash|zsh|fish.
+Short commands: ubti ubtr ubtu ubtd ubtc ubtm ubta.
 HELP
 }
 case "${1:-}" in
