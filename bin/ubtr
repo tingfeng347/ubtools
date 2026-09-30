@@ -123,8 +123,14 @@ show_apt_preview() {
 }
 
 if [[ "${1:-}" == "--preview-package" ]]; then
-    src="${2:-}"
-    pkg="${3:-}"
+    if [[ -n "${3:-}" ]]; then
+        src="$2"
+        pkg="$3"
+    else
+        preview_line="${2:-}"
+        src="$(printf '%s\n' "$preview_line" | awk -F'\t' '{print $2}')"
+        pkg="$(printf '%s\n' "$preview_line" | awk -F'\t' '{print $3}')"
+    fi
     export LC_ALL="$ORIGINAL_LANG"
 
     if [[ "$src" == "snap" ]]; then
@@ -283,7 +289,7 @@ cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT INT TERM
 
 # --- 7. 交互式 FZF 渲染与智能预览 ---
-PREVIEW_CMD="line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); \"$SCRIPT_PATH\" --preview-package \"\$src\" \"\$pkg\""
+PREVIEW_CMD="\"$SCRIPT_PATH\" --preview-package {}"
 
 COLOR_BLUE=$'\033[34m'
 COLOR_SNAP=$'\033[35m'

@@ -121,8 +121,14 @@ show_apt_preview() {
 }
 
 if [[ "${1:-}" == "--preview-package" ]]; then
-    src="${2:-}"
-    pkg="${3:-}"
+    if [[ -n "${3:-}" ]]; then
+        src="$2"
+        pkg="$3"
+    else
+        preview_line="${2:-}"
+        src="$(printf '%s\n' "$preview_line" | awk -F'\t' '{print $2}')"
+        pkg="$(printf '%s\n' "$preview_line" | awk -F'\t' '{print $3}')"
+    fi
     export LC_ALL="$ORIGINAL_LANG"
 
     if [[ "$src" == "snap" ]]; then
@@ -388,7 +394,7 @@ mkdir -p "$CACHE_DIR"
 SNAP_CACHE="${CACHE_DIR}/snap_packages.txt"
 FLATPAK_CACHE="${CACHE_DIR}/flatpak_packages.txt"
 
-PREVIEW_CMD="line={}; src=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$2}'); pkg=\$(printf '%s\n' \"\$line\" | awk -F'\t' '{print \$3}'); \"$SCRIPT_PATH\" --preview-package \"\$src\" \"\$pkg\""
+PREVIEW_CMD="\"$SCRIPT_PATH\" --preview-package {}"
 
 stop_generator() {
     if [[ -n "$GENERATOR_PID" ]]; then
