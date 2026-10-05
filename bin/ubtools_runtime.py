@@ -69,10 +69,10 @@ def confirm(message, yes=False):
             answer = input(message + " [y/N] ")
         else:
             try:
-                with open("/dev/tty", "r+") as tty:
-                    tty.write(message + " [y/N] ")
-                    tty.flush()
-                    answer = tty.readline().strip()
+                # A terminal cannot seek, so buffered read/write mode fails.
+                with open("/dev/tty", "r+b", buffering=0) as tty:
+                    tty.write((message + " [y/N] ").encode("utf-8"))
+                    answer = tty.readline().decode("utf-8").strip()
             except OSError:
                 answer = input(message + " [y/N] ")
         return answer.lower() == "y"

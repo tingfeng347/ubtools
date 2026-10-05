@@ -88,6 +88,7 @@ class UnifiedTests(unittest.TestCase):
             ["bash", "-c", script], capture_output=True, text=True, check=True
         )
         self.assertIn("status", proc.stdout)
+        self.assertIn("remove", proc.stdout)
         self.assertIn("pi", output)
         self.assertIn("install", proc.stdout)
         self.assertNotIn("backup", output)
@@ -113,7 +114,7 @@ class UnifiedTests(unittest.TestCase):
 
 
 class AITests(unittest.TestCase):
-    def test_no_arguments_reaches_interactive_install_on_older_python(self):
+    def test_no_arguments_reaches_install_menu_on_older_python(self):
         original_get_values = argparse.ArgumentParser._get_values
 
         def legacy_get_values(parser, action, values):
@@ -128,7 +129,7 @@ class AITests(unittest.TestCase):
             ), patch.object(sys, "argv", ["ubtools_ai.py"]), patch.object(
                 ai, "choose", return_value=list(ai.TOOLS)
             ) as choose, patch.object(
-                ai, "detect", return_value=ai.Installation()
+                ai, "detect_all", return_value=[]
             ), patch.object(ai, "confirm", return_value=False), patch.object(
                 ai, "execute"
             ) as execute, redirect_stdout(io.StringIO()):
@@ -164,19 +165,101 @@ class AITests(unittest.TestCase):
                 os.environ, UBTOOLS_LANG=language
             ), patch.object(ai.shutil, "which", return_value="/bin/fzf"), patch.object(
                 ai, "run", return_value=result
-            ) as run:
+            ) as run, patch.object(ai, "detect_all", return_value=[]):
                 self.assertEqual(ai.choose("install"), list(ai.TOOLS))
             arguments, kwargs = run.call_args
             self.assertIn("ctrl-a:select-all,ctrl-d:deselect-all", arguments[0])
             self.assertEqual(
                 arguments[0][arguments[0].index("--header") + 1], expected_header
             )
-            self.assertEqual(kwargs["input"], "codex\nclaude\nopencode\npi\n")
+            state = "未安装" if language == "zh" else "Not installed"
+            self.assertEqual(kwargs["input"], "".join(f"{name}\t{state}\t-\n" for name in ai.TOOLS))
+
+    def test_separate_remove_menu_shows_only_installed_tools(self):
+        installed = ai.Installation('/local/bin/codex', 'npm', '@openai/codex')
+        result = subprocess.CompletedProcess([], 0, 'codex\tInstalled\tnpm\t/local/bin/codex\n')
+        with patch.object(ai.shutil, 'which', return_value='/bin/fzf'), patch.object(
+            ai, 'detect_all', side_effect=lambda name: [installed] if name == 'codex' else []
+        ), patch.object(ai, 'run', return_value=result) as run:
+            self.assertEqual(ai.choose('uninstall'), [('codex', installed)])
+        rows = run.call_args.kwargs['input']
+        self.assertIn('codex\t', rows)
+        self.assertNotIn('pi\t', rows)
+        self.assertFalse(any(arg.startswith('--expect') for arg in run.call_args.args[0]))
+
+    def test_remove_menu_previews_and_requires_confirmation(self):
+        installed = ai.Installation('/local/bin/codex', 'npm', '@openai/codex')
+        with patch.object(ai, 'choose', return_value=['codex']) as choose, patch.object(
+            ai, 'detect_all', return_value=[installed]
+        ), patch.object(ai, 'confirm', return_value=False) as confirm, patch.object(
+            ai, 'execute'
+        ) as execute, redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(ai.main(['remove']), 0)
+        choose.assert_called_once_with('uninstall')
+        self.assertIn('npm uninstall --global @openai/codex', output.getvalue())
+        confirm.assert_called_once()
+        execute.assert_not_called()
+
+    def test_remove_menu_confirmed_uninstall_uses_existing_manager(self):
+        installed = ai.Installation('/local/bin/codex', 'npm', '@openai/codex')
+        with patch.object(ai, 'choose', return_value=['codex']), patch.object(
+            ai, 'detect_all', side_effect=[[installed], []]
+        ), patch.object(ai, 'confirm', return_value=True), patch.object(ai, 'execute') as execute, redirect_stdout(io.StringIO()):
+            self.assertEqual(ai.main(['remove']), 0)
+        execute.assert_called_once_with([['npm', 'uninstall', '--global', '@openai/codex']], 15)
+
+    def test_remove_and_legacy_uninstall_support_named_tools_and_dry_run(self):
+        installed = ai.Installation('/local/bin/codex', 'npm', '@openai/codex')
+        for action in ['remove', 'uninstall']:
+            with self.subTest(action=action), patch.object(ai, 'detect_all', return_value=[installed]), patch.object(
+                ai, 'execute'
+            ) as execute, patch.object(ai, 'choose') as choose, redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(ai.main([action, 'codex', '--dry-run']), 0)
+            self.assertIn('npm uninstall --global @openai/codex', output.getvalue())
+            execute.assert_not_called()
+            choose.assert_not_called()
+
+    def test_remove_skips_missing_tools(self):
+        with patch.object(ai, 'choose', return_value=['pi']), patch.object(
+            ai, 'detect_all', return_value=[]
+        ), patch.object(ai, 'confirm') as confirm, patch.object(ai, 'execute') as execute, redirect_stdout(io.StringIO()):
+            self.assertEqual(ai.main(['remove']), 0)
+        confirm.assert_not_called()
+        execute.assert_not_called()
+
+    def test_menu_status_is_explicit_and_offline(self):
+        with patch.object(ai, 'choose'), patch.object(
+            ai, 'detect_all', side_effect=lambda name: [ai.Installation('/local/bin/codex', 'npm', '@openai/codex')] if name == 'codex' else []
+        ), patch.object(ai, 'version', return_value=('1.0', False)), patch.object(ai, 'fetch') as fetch, patch.object(
+            ai, 'execute'
+        ) as execute, patch.dict(os.environ, UBTOOLS_LANG='zh'), redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(ai.main(['status', 'codex', 'pi']), 0)
+        self.assertIn('已安装', output.getvalue())
+        self.assertIn('未安装', output.getvalue())
+        fetch.assert_not_called()
+        execute.assert_not_called()
+
+    def test_install_menu_cancel_does_not_execute(self):
+        with patch.object(ai, 'choose', return_value=[]), patch.object(
+            ai, 'confirm'
+        ) as confirm, patch.object(ai, 'execute') as execute:
+            self.assertEqual(ai.main([]), 0)
+        confirm.assert_not_called()
+        execute.assert_not_called()
+
+    @unittest.skipUnless(shutil.which('fzf'), 'real fzf is unavailable')
+    def test_real_fzf_install_menu_searches_only_tool_names(self):
+        installed = ai.Installation('/local/bin/codex', 'npm', '@openai/codex')
+        for query, expected in [('codex', ['codex']), ('npm', []), ('Installed', [])]:
+            with self.subTest(query=query), patch.dict(os.environ, FZF_DEFAULT_OPTS=f'--filter={query}'), patch.object(
+                ai, 'detect_all', return_value=[installed]
+            ):
+                self.assertEqual(ai.choose('install'), expected)
 
     @unittest.skipUnless(shutil.which("fzf"), "real fzf is unavailable")
     def test_real_fzf_can_select_all_tools_for_install_preview(self):
         with patch.dict(os.environ, FZF_DEFAULT_OPTS="--filter="), patch.object(
-            ai, "detect", return_value=ai.Installation()
+            ai, "detect_all", return_value=[]
         ), patch.object(ai, "execute") as execute, patch.object(
             ai, "fetch"
         ) as fetch, redirect_stdout(io.StringIO()) as output:
@@ -187,7 +270,7 @@ class AITests(unittest.TestCase):
         fetch.assert_not_called()
 
     def test_fresh_install_dry_run_does_not_download_or_execute(self):
-        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+        with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "fetch"
         ) as fetch, patch.object(ai, "execute") as execute, redirect_stdout(
             io.StringIO()
@@ -293,7 +376,7 @@ class AITests(unittest.TestCase):
                 self.assertEqual(found.package, package)
 
     def test_pi_dry_run_and_latest_version_query(self):
-        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+        with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "fetch", return_value=b'{"version":"1.2.3"}'
         ) as fetch, patch.object(ai, "execute") as execute, redirect_stdout(
             io.StringIO()
@@ -346,21 +429,21 @@ class AITests(unittest.TestCase):
             self.assertEqual(ai.detect("codex").method, "apt")
 
     def test_declined_install_does_not_execute(self):
-        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+        with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "confirm", return_value=False
         ), patch.object(ai, "execute") as execute, redirect_stdout(io.StringIO()):
             self.assertEqual(ai.main(["install", "codex"]), 0)
         execute.assert_not_called()
 
     def test_missing_clients_are_skipped_on_update(self):
-        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+        with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "execute"
         ) as execute, redirect_stdout(io.StringIO()):
             self.assertEqual(ai.main(["update", "--all"]), 0)
         execute.assert_not_called()
 
     def test_offline_status_does_not_query_versions_online(self):
-        with patch.object(ai, "detect", return_value=ai.Installation()), patch.object(
+        with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "fetch"
         ) as fetch, redirect_stdout(io.StringIO()):
             self.assertEqual(ai.main(["status"]), 0)

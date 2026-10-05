@@ -85,6 +85,10 @@ ub update --dry-run            # 在界面选择后只打印命令
 ub update --refresh-index      # 先更新 APT 索引（需要 sudo）
 ```
 
+安装界面只按软件包名称匹配关键词，版本号、来源和安装状态不参与搜索。
+Snap 在启动时和修改搜索词后查询商店；未输入关键词时展示推荐包。
+输入停顿 0.3 秒后开始查询，关键词结果与推荐列表分别缓存，Ctrl+R 可强制刷新当前查询。
+
 更新时，Snap 展示版本和修订号；Flatpak 展示版本和提交标识，并区分用户级与系统级安装，
 可识别版本名称相同的更新。APT 使用本机索引，只有 `--refresh-index` 才会先更新索引。
 选择后确认，执行 `apt-get install --only-upgrade`、`snap refresh` 或相应范围的
@@ -157,15 +161,18 @@ ub mirror test --timeout 5 --limit 4
 ## AI 编程工具
 
 ```bash
-ub ai                          # 多选安装，等同于 install
+ub ai                          # 安装界面，显示安装状态
 ub ai install                  # 多选 Codex / Claude Code / OpenCode / Pi Agent
 ub ai install codex claude opencode pi
 ub ai install --all --dry-run  # 只预览安装/更新计划
 ub ai install pi               # 单独安装 Pi Agent
 ub ai update pi                # 更新 Pi Agent
-ub ai uninstall                # 多选卸载已安装的 AI 工具
-ub ai uninstall pi             # 卸载单个工具
-ub ai uninstall --all --dry-run # 预览全部卸载命令
+ub ai update --check           # 只检查所有已安装工具是否有上游新版本
+ub ai update codex --check     # 只检查 Codex
+ub ai remove                   # 多选卸载已安装的 AI 工具
+ub ai remove pi                # 卸载单个工具
+ub ai remove --all --dry-run    # 预览全部工具、全部来源的卸载命令
+ub ai remove codex --path ~/.local/bin/codex # 卸载指定安装副本
 ub ai status pi                # 查看 Pi 版本和安装来源
 ub ai update                   # 多选更新已安装的客户端
 ub ai update --all             # 更新全部已安装客户端
@@ -180,7 +187,8 @@ ub ai doctor                  # 加上官方安装入口连通性检查
 已有 npm、pnpm、Bun、Homebrew、APT 或官方原生安装会沿用相应方式更新。
 原生 Claude Code 更新遵循它已有的更新渠道设置，APT/Homebrew 更新遵循已有仓库或渠道。
 无法可靠识别的安装以及由 Arch 包管理器管理的客户端，会提示用原安装工具更新，不创建重复安装。
-`status --latest` 标注的是 npm 渠道版本，可能与其他发布渠道不同。
+`status --latest` 和 `update --check` 的最新版本来自 npm 上游发布，可能与 APT、Homebrew 或预发布渠道不同。
+`update --check` 按 [SemVer](https://semver.org/) 比较每处安装的版本，显示可更新、已是最新、本机版本较新或无法比较；不执行更新。查询失败会报告错误并继续检查其他工具。
 
 Pi Agent 的命令名是 `pi`，新安装使用 [Pi 官方安装脚本](https://pi.dev/docs/latest/quickstart)。
 官方托管安装通过 `pi update` 更新；npm 安装沿用 npm，并使用当前包
@@ -188,10 +196,15 @@ Pi Agent 的命令名是 `pi`，新安装使用 [Pi 官方安装脚本](https://
 检测到旧的 `@mariozechner/pi-coding-agent` 安装时，按[官方迁移说明](https://pi.dev/changelog/2026/5/7/pi-has-a-new-home)
 执行两次 `pi update`，先更新旧发行版，再切换新包名。
 
-TUI 中按 `Tab` 多选，`Ctrl+A` 全选四个工具，`Ctrl+D` 取消全选，`Enter` 进入计划确认，`Esc` 退出。
+TUI 中按 `Tab` 多选，`Ctrl+A` 全选列表项，`Ctrl+D` 取消全选，`Enter` 进入计划确认，`Esc` 退出。
 安装、更新和卸载先展示计划并确认；`--dry-run` 只预览命令，`--yes` 可跳过 ub 的计划确认。
 Pi 官方安装器可能继续询问 Node.js 运行时和安装方式，请按它的提示完成。
-`ub ai uninstall` 按已检测到的来源运行原包管理器或官方卸载方式；默认保留客户端配置、凭据和会话。
+`ub ai`（或 `ub ai install`）打开安装界面，显示各工具是否已安装及安装来源，仅按工具名搜索。
+`ub ai remove` 打开独立的卸载界面，按来源和路径分别列出已安装副本。两个界面均用 Tab 多选、Enter 继续、Esc 退出。
+检测范围包含 PATH 中的可执行文件、官方用户安装目录、常见 npm/Bun/pnpm 目录、NVM 的 Node 版本目录，以及已配置的安装目录。同一目标的软链合并为一处安装；`ub ai status` 显示全部副本并标记当前 PATH 生效的副本。
+直接指定工具名且有多处安装时，需用 `--path` 指定副本或进入卸载界面选择；`remove --all` 选择全部工具的全部安装副本。
+操作结束后重新检测状态；卸载未完成会返回失败，卸载一处但仍有其他安装时会列出剩余路径。安装和更新也会复查版本并提示重复安装。
+卸载前显示命令并要求确认，按已检测到的来源运行原包管理器或官方卸载方式，默认保留客户端配置、凭据和会话。原 `ub ai uninstall` 命令仍可使用。
 OpenCode 通过官方 `opencode uninstall --keep-config --keep-data` 保留配置和会话；
 Pi 托管安装器需在其界面按 `U` 选择卸载。Pi 安装器仍会保留 `~/.pi/agent/` 数据。
 OpenCode、Pi 与 Codex 按各自的[官方 CLI 文档](https://opencode.ai/v2/docs/cli)、

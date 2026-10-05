@@ -150,6 +150,20 @@ if [[ "${1:-}" == "--stream-list" ]]; then
     exit 0
 fi
 
+# fzf substitutes {q} as a shell-quoted argument. Keep each reload's installed
+# list private, and debounce typing before making a store request.
+if [[ "${1:-}" == "--reload-list" ]]; then
+    shift
+    generator_pid="$1"; list_file="$2"; work_dir="$3"
+    shift 3
+    kill -- "-$generator_pid" 2>/dev/null || true
+    sleep 0.3
+    installed_file="$(mktemp "$work_dir/installed.XXXXXX")"
+    trap 'rm -f "$installed_file"' EXIT
+    "$0" --generate-list false "$installed_file" "$@" | tee "$list_file"
+    exit 0
+fi
+
 # --- 0. 内部生成器拦截 (由 fzf reload 或后台进程触发) ---
 if [[ "${1:-}" == "--generate-list" ]]; then
     FORCE_REFRESH="$2"
@@ -160,7 +174,13 @@ if [[ "${1:-}" == "--generate-list" ]]; then
     SHOW_APT="${7:-true}"
     SHOW_SNAP="${8:-true}"
     SHOW_FLATPAK="${9:-true}"
+    SNAP_QUERY="${10:-}"
     CACHE_TIME=3600
+    # A keyword search is a separate catalog, never the featured cache.
+    if [[ -n "$SNAP_QUERY" ]]; then
+        query_key="$(printf '%s' "$SNAP_QUERY" | sha256sum)"
+        SNAP_CACHE="${SNAP_CACHE%.txt}.query-${query_key%% *}.txt"
+    fi
 
     AWK_CMD='
         function ellipsize(s, n) {
@@ -168,11 +188,15 @@ if [[ "${1:-}" == "--generate-list" ]]; then
         }
         FILENAME==ARGV[1] { installed[$1]=1; next }
         {
+            # Ignore malformed rows left by older Snap cache parsers, too.
+            if ($1 == "snap" && ($2 !~ /^[a-z0-9][a-z0-9-]*$/ || NF < 3)) next
             status = ($2 in installed) ? ci " ✔ " label r : ""
             src = ellipsize($1, 18)
-            pkg = ellipsize($2, 42)
+            pkg = $2
             ver = ellipsize($3, 22)
-            printf "%s%-18s%s %-42s %-22s %s\t%s\t%s\n", c, src, r, pkg, ver, status, $1, $2
+            # Fields 2/3 remain the source and full package name for previews
+            # and installation. fzf displays 1/4/5 and searches only field 4.
+            printf "%s%-18s%s\t%s\t%s\t%-42s\t%-22s %s\n", c, src, r, $1, $2, pkg, ver, status
             fflush()
         }
     '
@@ -213,7 +237,10 @@ if [[ "${1:-}" == "--generate-list" ]]; then
         tmp="$(mktemp "${cache}.XXXXXX")"
         trap 'rm -f "$tmp"' EXIT
         if [[ "$src" == snap ]]; then
-            if ! timeout --foreground --kill-after=2s 15s snap find 2>/dev/null | awk 'NR > 1 {print "snap", $1, $2}' > "$tmp"; then
+            snap_args=(find)
+            [[ -z "$SNAP_QUERY" ]] || snap_args+=("$SNAP_QUERY")
+            if ! timeout --foreground --kill-after=2s 15s snap "${snap_args[@]}" 2>/dev/null \
+                | awk '$1 ~ /^[a-z0-9][a-z0-9-]*$/ && NF >= 2 {print "snap", $1, $2}' > "$tmp"; then
                 rm -f "$tmp"
                 return 0
             fi
@@ -296,6 +323,7 @@ while [[ $# -gt 0 ]]; do
         *) QUERY_ARGS+=("$1"); shift ;;
     esac
 done
+QUERY_TEXT="${QUERY_ARGS[*]:-}"
 
 SCRIPT_PATH="$(realpath "$0" 2>/dev/null || echo "$0")"
 
@@ -417,7 +445,7 @@ start_generator() {
     : > "$LIST_FILE"
     setsid "$SCRIPT_PATH" --stream-list "$LIST_FILE" --generate-list \
         "$FORCE_REFRESH" "$INSTALLED_LIST" "$SNAP_CACHE" "${MSG[INSTALLED]}" \
-        "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" \
+        "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK" "$QUERY_TEXT" \
         > "$LIST_PIPE" 2>/dev/null &
     GENERATOR_PID=$!
     FZF_INPUT="$LIST_PIPE"
@@ -440,9 +468,22 @@ if [[ "$SHOW_FLATPAK" == true ]]; then
     FZF_HEADER+=" | ${COLOR_CYAN}Flatpak${COLOR_RESET}"
 fi
 
-QUERY_TEXT="${QUERY_ARGS[*]:-}"
-
+# Single quotes work in bash, dash and fish (fzf uses the user's $SHELL).
+shell_quote() {
+    local value="${1//\'/\'\\\'\'}"
+    printf "'%s'" "$value"
+}
 while true; do
+    FZF_RELOAD_OPTIONS=()
+    RELOAD_CMD="$(shell_quote "$SCRIPT_PATH") --reload-list"
+    for value in "$GENERATOR_PID" "$LIST_FILE" "$TMP_DIR" "$SNAP_CACHE" \
+        "${MSG[INSTALLED]}" "$FLATPAK_CACHE" "$SHOW_APT" "$SHOW_SNAP" "$SHOW_FLATPAK"; do
+        RELOAD_CMD+=" $(shell_quote "$value")"
+    done
+    RELOAD_CMD+=' {q}'
+    if [[ "$SHOW_SNAP" == true ]]; then
+        FZF_RELOAD_OPTIONS+=(--bind "change:reload:$RELOAD_CMD")
+    fi
     FZF_MATCH_OPTIONS=()
     if [[ "$FZF_EXACT" == true ]]; then
         FZF_MATCH_OPTIONS+=(--exact)
@@ -455,13 +496,15 @@ while true; do
     fzf --multi --ansi \
         "${FZF_MATCH_OPTIONS[@]}" \
         --delimiter=$'\t' \
-        --with-nth=1 \
+        --with-nth=1,4,5 \
+        --nth=2 \
         --expect=ctrl-e,ctrl-r \
         --print-query \
         --preview "$PREVIEW_CMD" \
         --preview-window=down:55%:wrap \
         --height=95% --layout=reverse --border \
         --bind "alt-j:last,alt-k:first" \
+        "${FZF_RELOAD_OPTIONS[@]}" \
         --tiebreak=index \
         --header "$CURRENT_HEADER" \
         --query "$QUERY_TEXT" \
@@ -488,7 +531,9 @@ while true; do
     fi
 
     if [[ $FZF_EXIT -eq 0 && "$FZF_KEY" == "ctrl-e" ]]; then
-        if kill -0 "$GENERATOR_PID" 2>/dev/null; then
+        # A change-triggered reload belongs to fzf and is stopped when it exits.
+        # Restart Snap queries even if the original streaming producer is done.
+        if [[ "$SHOW_SNAP" == true ]] || kill -0 "$GENERATOR_PID" 2>/dev/null; then
             FORCE_REFRESH=false
             start_generator
         else

@@ -1,4 +1,4 @@
-"""Install/update AI clients through their official distribution channels."""
+"""Manage AI clients through their official distribution channels."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ import sys
 import tempfile
 import urllib.parse
 from dataclasses import dataclass
+from contextlib import ExitStack
 from pathlib import Path
 
 from ubtools_runtime import command, confirm, fetch, run, text, within
@@ -43,22 +44,67 @@ class Installation:
     path: str = ""
     method: str = "missing"
     package: str = ""
+    target: str = ""
+    prefix: str = ""
+    manager: str = ""
+    aliases: tuple = ()
+
+
+def candidate_paths(name):
+    home = Path.home()
+    primary = shutil.which(name)
+    if primary:
+        yield primary
+    directories = [Path(value or '.') for value in os.environ.get('PATH', '').split(os.pathsep)]
+    directories += [home / '.local/bin', home / '.opencode/bin',
+                    home / '.npm-global/bin', home / '.npm/bin', home / '.bun/bin',
+                    home / '.local/share/pnpm', home / '.volta/bin']
+    directories.append(Path(os.environ.get('XDG_DATA_HOME', str(home / '.local/share'))) / 'pnpm')
+    for variable in ['CODEX_INSTALL_DIR', 'PNPM_HOME', 'BUN_INSTALL_BIN']:
+        if os.environ.get(variable):
+            directories.append(Path(os.environ[variable]).expanduser())
+    for variable in ['NPM_CONFIG_PREFIX', 'npm_config_prefix', 'BUN_INSTALL']:
+        if os.environ.get(variable):
+            directories.append(Path(os.environ[variable]).expanduser() / 'bin')
+    nvm = Path(os.environ.get('NVM_DIR', str(home / '.nvm'))).expanduser()
+    directories += sorted(nvm.glob('versions/node/*/bin'))
+    if name == 'pi':
+        directories.append(Path(os.environ.get('PI_CODING_AGENT_DIR', str(home / '.pi/agent'))) / 'bin')
+    for directory in directories:
+        launcher = directory / name
+        if launcher.is_file() and os.access(launcher, os.X_OK):
+            yield str(launcher.absolute())
+
+
+def detect_all(name):
+    """Discover distinct executable targets; PATH order determines the active one."""
+    installations = {}
+    for candidate in candidate_paths(name):
+        path = str(Path(candidate).absolute())
+        target = str(Path(path).resolve())
+        if target in installations:
+            found = installations[target]
+            if path not in found.aliases:
+                found.aliases += (path,)
+            continue
+        found = classify(name, path)
+        found.target = target
+        found.aliases = (path,)
+        installations[target] = found
+    return list(installations.values())
 
 
 def detect(name):
+    return next(iter(detect_all(name)), Installation())
+
+
+def classify(name, found):
     home = Path.home()
-    native = home / (".opencode/bin" if name == "opencode" else ".local/bin") / name
-    pi_root = Path(os.environ.get("PI_CODING_AGENT_DIR", str(home / ".pi/agent")))
-    found = shutil.which(name)
-    if not found and name == "pi":
-        launcher = pi_root / "bin/pi"
-        if launcher.is_file() and os.access(launcher, os.X_OK):
-            found = str(launcher)
-    # Installers cannot change this process's PATH; check their user locations too.
-    if not found and native.is_file() and os.access(native, os.X_OK):
-        found = str(native)
-    if not found:
-        return Installation()
+    native = home / ('.opencode/bin' if name == 'opencode' else '.local/bin') / name
+    native_paths = [native.resolve()]
+    if name == 'codex' and os.environ.get('CODEX_INSTALL_DIR'):
+        native_paths.append((Path(os.environ['CODEX_INSTALL_DIR']).expanduser() / name).resolve())
+    pi_root = Path(os.environ.get('PI_CODING_AGENT_DIR', str(home / '.pi/agent')))
     path = Path(found).resolve()
     value = str(path)
     if shutil.which("dpkg-query"):
@@ -84,11 +130,30 @@ def detect(name):
     ):
         return Installation(found, "native")
     if "/node_modules/" in value:
-        method = "pnpm" if "/.pnpm/" in value else "bun" if "/.bun/" in value else "npm"
+        bun_global = os.environ.get('BUN_INSTALL_GLOBAL_DIR')
+        is_bun = '/install/global/node_modules/' in value or (bun_global and within(path, bun_global))
+        method = "pnpm" if "/.pnpm/" in value else "bun" if is_bun else "npm"
         package = TOOLS[name]["package"]
         if name == "pi" and "/node_modules/@mariozechner/pi-coding-agent/" in value:
             package = "@mariozechner/pi-coding-agent"
-        return Installation(found, method, package)
+        prefix = ''
+        if method == 'npm' and '/lib/node_modules/' in value:
+            prefix = value.split('/lib/node_modules/', 1)[0] or '/'
+        elif method == 'pnpm' and '/global/' in value:
+            prefix = value.split('/node_modules/', 1)[0]
+            # pnpm adds a numeric layout version under configured globalDir.
+            if Path(prefix).name.isdigit():
+                prefix = str(Path(prefix).parent)
+        elif method == 'bun':
+            prefix = value.split('/node_modules/', 1)[0]
+        managers = [Path(found).parent / method]
+        if prefix and method == 'npm':
+            managers.insert(0, Path(prefix) / 'bin/npm')
+        elif prefix and method == 'bun':
+            managers.insert(0, Path(prefix).parent.parent / 'bin/bun')
+        manager_path = next((str(item) for item in managers if item.is_file() and os.access(item, os.X_OK)),
+                            shutil.which(method) or '')
+        return Installation(found, method, package, prefix=prefix, manager=manager_path)
     if "/Cellar/" in value or "/Caskroom/" in value:
         method = "brew-cask" if "/Caskroom/" in value else "brew"
         return Installation(found, method, "claude-code" if name == "claude" else name)
@@ -99,7 +164,7 @@ def detect(name):
         Path(os.environ.get("CODEX_HOME", str(home / ".codex")))
         / "packages/standalone",
     ]
-    if path == native.resolve() or any(within(path, root) for root in native_roots):
+    if path in native_paths or any(within(path, root) for root in native_roots):
         return Installation(found, "native")
     return Installation(found, "unmanaged")
 
@@ -111,7 +176,7 @@ def version(installation):
         result = run(
             [installation.path, "--version"], timeout=5, capture_output=True, text=True
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
         return "version check failed/timed out", True
     output = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout).strip().splitlines()
     value = "".join(c for c in (output[0] if output else "-") if c.isprintable())[:100]
@@ -123,10 +188,30 @@ def latest(name, timeout):
     data = json.loads(
         fetch(f"https://registry.npmjs.org/{package}/latest", timeout=timeout)
     )
-    value = data.get("version", "")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", value):
+    value = data.get("version", "") if isinstance(data, dict) else None
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", value):
         raise ValueError("invalid published version metadata")
     return value
+
+
+def manager_command(existing, arguments):
+    """Operate on the selected global installation, including a hidden npm prefix."""
+    method = existing.method
+    if existing.target and not existing.prefix:
+        raise ValueError(text(
+            f"无法确认全局安装目录，请使用原安装工具处理：{existing.path}",
+            f"Cannot identify the global installation directory; use the original manager: {existing.path}",
+        ))
+    executable = existing.manager or method
+    if existing.prefix and method == "npm":
+        return [executable, *arguments, "--prefix", existing.prefix]
+    if existing.prefix and method == "pnpm":
+        return [executable, *arguments, "--global-dir", existing.prefix,
+                "--global-bin-dir", str(Path(existing.path).parent)]
+    if existing.prefix and method == "bun":
+        return ["env", f"BUN_INSTALL_GLOBAL_DIR={existing.prefix}",
+                f"BUN_INSTALL_BIN={Path(existing.path).parent}", executable, *arguments]
+    return [executable, *arguments]
 
 
 def plan(name, existing, action, yes=False):
@@ -134,9 +219,8 @@ def plan(name, existing, action, yes=False):
     package = existing.package
     if action == "uninstall":
         if method in {"npm", "pnpm", "bun"}:
-            command_name = {"npm": "npm", "pnpm": "pnpm", "bun": "bun"}[method]
             verb = "uninstall" if method == "npm" else "remove"
-            return [[command_name, verb, "--global", package]]
+            return [manager_command(existing, [verb, "--global", package])]
         if method == "apt":
             privilege = [] if os.geteuid() == 0 else ["sudo"]
             return [
@@ -193,7 +277,10 @@ def plan(name, existing, action, yes=False):
                 raise ValueError(
                     f"claude: refusing to remove unexpected native path: {launcher}"
                 )
-            return [["@remove", str(launcher)], ["@remove-tree", str(share)]]
+            steps = [["@remove", str(launcher)]]
+            if within(launcher.resolve(), share):
+                steps.append(["@remove-tree", str(share)])
+            return steps
         if method == "native" and name == "codex":
             home = Path.home()
             code_home = Path(
@@ -204,14 +291,22 @@ def plan(name, existing, action, yes=False):
                 os.environ.get("CODEX_INSTALL_DIR", str(home / ".local/bin"))
             ).expanduser()
             runtime = code_home / "packages/standalone"
+            legacy_runtime = home / ".local/share/codex"
+            if within(Path(existing.path).resolve(), legacy_runtime):
+                runtime = legacy_runtime
             if launcher.name != "codex" or not (
                 within(launcher, install_dir)
+                or within(launcher, home / '.local/bin')
                 or within(launcher, code_home / "packages/standalone")
+                or within(launcher, legacy_runtime)
             ):
                 raise ValueError(
                     f"codex: refusing to remove unexpected native path: {launcher}"
                 )
-            return [["@remove", str(launcher)], ["@remove-tree", str(runtime)]]
+            steps = [["@remove", str(launcher)]]
+            if within(launcher.resolve(), runtime):
+                steps.append(["@remove-tree", str(runtime)])
+            return steps
         raise ValueError(
             f"{name}: {text('暂不支持此安装方式的卸载', 'uninstall is not supported for this installation method')}: {existing.path}"
         )
@@ -229,7 +324,7 @@ def plan(name, existing, action, yes=False):
             "bun": ["install", "--global"],
         }
         flags = ["--ignore-scripts"] if name == "pi" and method == "npm" else []
-        return [[method, *verbs[method], *flags, package + "@latest"]]
+        return [manager_command(existing, [*verbs[method], *flags, package + "@latest"])]
     if method == "apt":
         return [
             ["sudo", "apt-get", "update"],
@@ -285,25 +380,34 @@ def display_plan(steps):
 def execute(steps, timeout):
     for step in steps:
         if step[0] in {"@installer", "@pi-uninstaller"}:
-            if step[0] == "@pi-uninstaller":
-                try:
-                    with open("/dev/tty", "r+"):
-                        pass
-                except OSError as error:
-                    raise RuntimeError(
-                        "Pi's official uninstaller needs an interactive TTY"
-                    ) from error
-            data = fetch(step[1], timeout=timeout, limit=2 * 1024 * 1024)
-            if not data.startswith(b"#!") or b"\x00" in data:
-                raise ValueError("official installer returned unexpected content")
-            with tempfile.TemporaryDirectory(prefix="ub-ai-") as directory:
+            with ExitStack() as stack:
+                terminal_io = {}
+                if step[0] == "@pi-uninstaller":
+                    try:
+                        # Buffered update streams require seeking; terminals
+                        # must use raw I/O. Keep this fd open for the installer.
+                        tty = stack.enter_context(open("/dev/tty", "r+b", buffering=0))
+                        if not os.isatty(tty.fileno()):
+                            raise OSError("not a terminal")
+                    except OSError as error:
+                        raise RuntimeError(text(
+                            "Pi 官方卸载器需要交互式终端（TTY）",
+                            "Pi's official uninstaller needs an interactive TTY",
+                        )) from error
+                    terminal_io = {"stdin": tty, "stdout": tty, "stderr": tty}
+                data = fetch(step[1], timeout=timeout, limit=2 * 1024 * 1024)
+                if not data.startswith(b"#!") or b"\x00" in data:
+                    raise ValueError("official installer returned unexpected content")
+                directory = stack.enter_context(tempfile.TemporaryDirectory(prefix="ub-ai-"))
                 script = Path(directory) / "install.sh"
                 script.write_bytes(data)
                 env = dict(os.environ)
                 if "chatgpt.com/codex/" in step[1]:
                     # Ignore an inherited prerelease selector for a latest install.
                     env["CODEX_RELEASE"] = "latest"
-                result = run([step[2], str(script), *step[3:]], timeout=600, env=env)
+                result = run(
+                    [step[2], str(script), *step[3:]], timeout=600, env=env, **terminal_io
+                )
         elif step[0] in {"@remove", "@remove-tree"}:
             target = Path(step[1]).expanduser()
             if target.is_symlink() or target.is_file():
@@ -326,15 +430,36 @@ def choose(action):
     fzf = shutil.which("fzf")
     if not fzf:
         raise ValueError("fzf unavailable; specify codex/claude/opencode/pi or --all")
-    candidates = [name for name in TOOLS if action == "install" or detect(name).path]
+    installations = {name: detect_all(name) for name in TOOLS}
+    candidates = [name for name, found in installations.items() if action == 'install' or found]
     if not candidates:
-        print(
-            text(
-                "尚未安装 AI 工具；请运行 ub ai install。",
-                "No clients installed; run ub ai install.",
-            )
-        )
+        print(text('尚未安装 AI 工具；请运行 ub ai install。',
+                   'No clients installed; run ub ai install.'))
         return []
+    rows = []
+    removal_rows = {}
+    for name in candidates:
+        found = installations[name]
+        if action == 'uninstall':
+            for item in found:
+                row = f'{name}\t{text("已安装", "Installed")}\t{item.method}\t{item.path}'
+                rows.append(row)
+                removal_rows[row] = (name, item)
+        else:
+            state = text('已安装', 'Installed') if found else text('未安装', 'Not installed')
+            if len(found) > 1:
+                state += text(f'（{len(found)} 处）', f' ({len(found)} copies)')
+            methods = '/'.join(dict.fromkeys(item.method for item in found)) or '-'
+            rows.append(f'{name}\t{state}\t{methods}')
+    header = text(
+        "Tab: 多选 | Ctrl+A: 全选 | Ctrl+D: 清除 | Enter: 继续 | Esc: 退出",
+        "Tab: Multi-select | Ctrl+A: Select all | Ctrl+D: Clear | Enter: Continue | Esc: Exit",
+    )
+    prompt = {
+        "install": text("安装 > ", "Install > "),
+        "update": text("更新 > ", "Update > "),
+        "uninstall": text("卸载 > ", "Remove > "),
+    }[action]
     selected = run(
         [
             fzf,
@@ -342,15 +467,16 @@ def choose(action):
             "--layout=reverse",
             "--border",
             "--height=60%",
+            "--delimiter=\t",
+            "--nth=1",
+            "--prompt",
+            prompt,
             "--bind",
             "ctrl-a:select-all,ctrl-d:deselect-all",
             "--header",
-            text(
-                "Tab: 多选 | Ctrl+A: 全选 | Ctrl+D: 清除 | Enter: 继续 | Esc: 退出",
-                "Tab: Multi-select | Ctrl+A: Select all | Ctrl+D: Clear | Enter: Continue | Esc: Exit",
-            ),
+            header,
         ],
-        input="\n".join(candidates) + "\n",
+        input="\n".join(rows) + "\n",
         text=True,
         stdout=subprocess.PIPE,
         timeout=None,
@@ -359,11 +485,13 @@ def choose(action):
         return []
     if selected.returncode:
         raise RuntimeError(f"fzf failed (exit {selected.returncode})")
-    return list(
-        dict.fromkeys(
-            name for name in selected.stdout.splitlines() if name in candidates
-        )
-    )
+    lines = selected.stdout.splitlines()
+    if action == 'uninstall':
+        # Return the exact installation selected, not just its tool name.
+        return [removal_rows[line] for line in dict.fromkeys(lines) if line in removal_rows]
+    selected_names = (line.split("\t", 1)[0] for line in lines)
+    names = list(dict.fromkeys(name for name in selected_names if name in candidates))
+    return names
 
 
 def tool_name(value):
@@ -372,6 +500,142 @@ def tool_name(value):
             f"unknown tool: {value}; choose from {', '.join(TOOLS)}"
         )
     return value
+
+
+SEMVER = re.compile(
+    r"(?<![\w.])v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?![\w.+-])"
+)
+
+
+def compare_versions(current, published):
+    """SemVer precedence: numeric components, prereleases, ignored build metadata."""
+    left, right = SEMVER.search(current), SEMVER.fullmatch(published)
+    if not left or not right:
+        return None
+    for match in (left, right):
+        if any(part.isdigit() and len(part) > 1 and part[0] == '0'
+               for part in (match[4] or '').split('.')):
+            return None
+    a, b = tuple(map(int, left.groups()[:3])), tuple(map(int, right.groups()[:3]))
+    if a != b:
+        return (a > b) - (a < b)
+    a, b = left[4], right[4]
+    if a == b:
+        return 0
+    if not a or not b:
+        return 1 if not a else -1
+    a, b = a.split('.'), b.split('.')
+    for x, y in zip(a, b):
+        if x == y:
+            continue
+        if x.isdigit() and y.isdigit():
+            return (int(x) > int(y)) - (int(x) < int(y))
+        if x.isdigit() != y.isdigit():
+            return -1 if x.isdigit() else 1
+        return (x > y) - (x < y)
+    return (len(a) > len(b)) - (len(a) < len(b))
+
+
+def check_updates(names, timeout):
+    print(text("工具       当前版本                  上游最新       状态 / 来源 / 路径",
+               "Tool       Installed version         Upstream       State / source / path"))
+    failed = False
+    for name in names:
+        installations = detect_all(name)
+        if not installations:
+            print(f"{name:10} -                         -              " + text("未安装", "Not installed"))
+            continue
+        try:
+            published = latest(name, timeout)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            print(text(f"{name}: 检查失败（{type(error).__name__}）",
+                       f"{name}: check failed ({type(error).__name__})"))
+            failed = True
+            continue
+        for found in installations:
+            current, bad = version(found)
+            comparison = None if bad else compare_versions(current, published)
+            if comparison is None:
+                state = text("无法比较", "Cannot compare")
+                failed = True
+            elif comparison < 0:
+                state = text("可更新", "Update available")
+            elif comparison == 0:
+                state = text("已是最新", "Up to date")
+            else:
+                state = text("本机版本较新", "Local version newer")
+            print(f"{name:10} {current:25} {published:14} {state} | {found.method} | {found.path}")
+    print(text("最新版本为 npm 上游发布版本；APT、Homebrew 等来源的可用版本可能不同。",
+               "Latest is the npm upstream release; APT/Homebrew availability may differ."))
+    return int(failed)
+
+
+def removal_targets(selections, all_sources=False, path=None):
+    targets = []
+    for selection in selections:
+        if isinstance(selection, tuple):
+            targets.append(selection)
+            continue
+        found = detect_all(selection)
+        if path:
+            requested = str(Path(path).expanduser().absolute())
+            found = [item for item in found if requested in (item.aliases or (item.path,))]
+            if not found:
+                raise ValueError(text(f"{selection}: 未找到指定安装路径 {requested}",
+                                      f"{selection}: installation path not found: {requested}"))
+        if len(found) > 1 and not all_sources:
+            paths = '\n'.join(f'  {item.method}: {item.path}' for item in found)
+            raise ValueError(text(
+                f"{selection} 有多处安装，请运行 ub ai remove 选择，或指定 --path：\n{paths}",
+                f"{selection} has multiple installations; select with ub ai remove or --path:\n{paths}",
+            ))
+        if not found:
+            print(text(f"跳过 {selection}：未安装", f"SKIP {selection}: not installed"))
+        targets.extend((selection, item) for item in found)
+    return targets
+
+
+def refreshed_status(name, action, selected):
+    """Re-detect after executing, so installer cancellation cannot look successful."""
+    remaining = detect_all(name)
+    selected_paths = set(selected.aliases or (selected.path,))
+    same_source = [item for item in remaining
+                   if selected_paths.intersection(item.aliases or (item.path,))
+                   or (selected.target and item.target == selected.target)]
+    if action == 'uninstall':
+        if same_source:
+            print(text(f"失败 {name}：所选安装仍存在（{selected.path}），未完成卸载。",
+                       f"FAIL {name}: selected installation still exists ({selected.path}); removal incomplete."))
+        elif remaining:
+            print(text(f"正常 {name}：所选安装已卸载，但还有 {len(remaining)} 处安装。",
+                       f"OK {name}: selected installation removed; {len(remaining)} other installation(s) remain."))
+        else:
+            print(text(f"正常 {name}：已卸载，复查为未安装；设置和数据已保留。",
+                       f"OK {name}: verified not installed; settings and data kept."))
+        for found in remaining:
+            print(text("  仍安装：", "  Remaining: ") + f"{found.method} | {found.path}")
+        return not same_source
+    expected = same_source if selected.path else remaining
+    if not expected:
+        print(text(f"失败 {name}：操作后未检测到目标安装。",
+                   f"FAIL {name}: target installation not found after operation."))
+        return False
+    found = expected[0]
+    current, bad = version(found)
+    state = text("失败", "FAIL") if bad else text("正常", "OK")
+    print(f"{state} {name}: {current} ({found.method} | {found.path})", flush=True)
+    if len(remaining) > 1:
+        print(text(f"  检测到 {len(remaining)} 处安装：", f"  {len(remaining)} installations detected:"))
+        for item in remaining:
+            print(f"  {item.method} | {item.path}")
+    if not bad:
+        print(text("登录/配置入口：", "Sign-in/configuration: ") + name)
+        if shutil.which(name) != found.path:
+            print(text(f"请将 {Path(found.path).parent} 添加到 PATH。",
+                       f"PATH: add {Path(found.path).parent} to your shell PATH"))
+    return not bad
 
 
 def main(argv=None):
@@ -383,15 +647,15 @@ def main(argv=None):
         ),
     )
     sub = parser.add_subparsers(dest="action")
-    for action in ["install", "update", "uninstall", "status", "doctor"]:
-        item = sub.add_parser(action)
+    for action in ["install", "update", "remove", "status", "doctor"]:
+        item = sub.add_parser(action, aliases=["uninstall"] if action == "remove" else [])
         # Validate each supplied value; choices + nargs="*" rejects [] on older Python.
         item.add_argument(
             "tools", nargs="*", type=tool_name, metavar="{" + ",".join(TOOLS) + "}"
         )
         item.add_argument("--all", action="store_true")
         item.add_argument("--timeout", type=int, default=15)
-        if action in {"install", "update", "uninstall"}:
+        if action in {"install", "update", "remove"}:
             item.add_argument("--dry-run", action="store_true")
             item.add_argument("--yes", "-y", action="store_true")
         if action == "status":
@@ -400,10 +664,22 @@ def main(argv=None):
                 action="store_true",
                 help="query latest npm publication versions",
             )
+        if action == "update":
+            item.add_argument("--check", action="store_true", help=text(
+                "检查当前版本和上游最新版本，不执行更新",
+                "Compare installed versions with upstream releases without updating",
+            ))
+        if action == "remove":
+            item.add_argument("--path", help=text(
+                "只卸载指定路径的安装，需要指定一个工具名",
+                "Remove this exact installation path; specify one tool name",
+            ))
         if action == "doctor":
             item.add_argument("--offline", action="store_true")
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments or ["install"])
+    if args.action == "remove":
+        args.action = "uninstall"
     if not args.action:
         parser.print_help()
         return 0
@@ -411,7 +687,11 @@ def main(argv=None):
         parser.error("--timeout must be positive")
     if args.all and args.tools:
         parser.error("use tool names or --all, not both")
+    if getattr(args, "path", None) and (args.all or len(args.tools) != 1):
+        parser.error("--path requires exactly one tool name")
     names = args.tools or list(TOOLS)
+    if args.action == "update" and args.check:
+        return check_updates(names, args.timeout)
     if (
         args.action in {"install", "update", "uninstall"}
         and not args.tools
@@ -421,20 +701,25 @@ def main(argv=None):
     failed = False
     if args.action in {"status", "doctor"}:
         for name in names:
-            found = detect(name)
-            current, bad_version = version(found)
-            failed |= bad_version
-            published = ""
-            if args.action == "status" and args.latest:
+            installations = detect_all(name)
+            if len(installations) > 1:
+                print(text(f'{name}: 检测到 {len(installations)} 处安装',
+                           f'{name}: {len(installations)} installations detected'))
+            published = ''
+            if args.action == 'status' and args.latest:
                 try:
-                    published = f" npm-latest={latest(name, args.timeout)}"
+                    published = f' npm-latest={latest(name, args.timeout)}'
                 except (OSError, ValueError) as error:
-                    published = f" latest-query-failed={type(error).__name__}"
+                    published = f' latest-query-failed={type(error).__name__}'
                     failed = True
-            print(
-                f"{name:10} {current:28} {found.method:12} {found.path}{published}",
-                flush=True,
-            )
+            active = shutil.which(name)
+            active_target = str(Path(active).resolve()) if active else ''
+            for found in installations or [Installation()]:
+                current, bad_version = version(found)
+                failed |= bad_version
+                state = text('已安装', 'Installed') if found.path else text('未安装', 'Not installed')
+                marker = text(' [当前]', ' [Active]') if active_target and active_target == found.target else ''
+                print(f'{name:10} {state:14} {current:28} {found.method:12} {found.path}{marker}{published}', flush=True)
         if args.action == "doctor":
             for dependency in ["curl", "bash", "tar", "unzip"]:
                 ok = bool(shutil.which(dependency))
@@ -461,22 +746,20 @@ def main(argv=None):
                         failed = True
         return int(failed)
     operations = []
-    for name in names:
-        found = detect(name)
-        if args.action in {"update", "uninstall"} and not found.path:
-            print(text(f"跳过 {name}：未安装", f"SKIP {name}: not installed"))
+    if args.action == 'uninstall':
+        targets = removal_targets(names, all_sources=args.all, path=args.path)
+    else:
+        targets = [(name, detect(name)) for name in names]
+    for name, found in targets:
+        if args.action == 'update' and not found.path:
+            print(text(f'跳过 {name}：未安装', f'SKIP {name}: not installed'))
             continue
-        steps = plan(
-            name, found, args.action, args.yes if args.action == "uninstall" else False
-        )
-        action_name = {
-            "install": text("安装", "install"),
-            "update": text("更新", "update"),
-            "uninstall": text("卸载", "uninstall"),
-        }[args.action]
-        print(f"{name}: {found.method} → {action_name}", flush=True)
+        steps = plan(name, found, args.action, args.yes if args.action == 'uninstall' else False)
+        action_name = {'install': text('安装', 'install'), 'update': text('更新', 'update'),
+                       'uninstall': text('卸载', 'uninstall')}[args.action]
+        print(f'{name}: {found.method} → {action_name}' + (f' ({found.path})' if found.path else ''), flush=True)
         display_plan(steps)
-        operations.append((name, steps))
+        operations.append((name, found, steps))
     if not operations or args.dry_run:
         return 0
     if not confirm(
@@ -489,22 +772,16 @@ def main(argv=None):
         args.yes,
     ):
         return 0
-    for name, steps in operations:
-        execute(steps, args.timeout)
-        if args.action == "uninstall":
-            print(text(f"正常 {name}：已卸载，设置和数据已保留", f"OK {name}: uninstalled; settings and data kept"), flush=True)
-            continue
-        found = detect(name)
-        current, bad = version(found)
-        if not found.path or bad:
-            raise RuntimeError(
-                f"{name}: installation finished but version verification failed"
-            )
-        print(text(f"正常 {name}：{current}（{found.path}）", f"OK {name}: {current} ({found.path})"), flush=True)
-        print(text("登录/配置入口：", "Sign-in/configuration: ") + name)
-        if shutil.which(name) != found.path:
-            print(text(f"请将 {Path(found.path).parent} 添加到 PATH。", f"PATH: add {Path(found.path).parent} to your shell PATH"))
-    return 0
+    for name, found, steps in operations:
+        try:
+            execute(steps, args.timeout)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+            print(text(f'失败 {name}：{error}', f'FAIL {name}: {error}'), flush=True)
+            refreshed_status(name, args.action, found)
+            return 1
+        if not refreshed_status(name, args.action, found):
+            failed = True
+    return int(failed)
 
 
 if __name__ == "__main__":

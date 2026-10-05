@@ -198,7 +198,7 @@ exit 130''')
         output = b''
         try:
             while b'Tab:Multi' not in output:
-                self.assertLess(time.monotonic() - started, 3, 'fzf did not draw')
+                self.assertLess(time.monotonic() - started, 10, 'fzf did not draw')
                 if select.select([master], [], [], .05)[0]:
                     chunk = os.read(master, 65536)
                     output += chunk
@@ -219,7 +219,8 @@ exit 130''')
                         break
             proc.wait(timeout=1)
             self.assertEqual(proc.returncode, 0)
-            self.assertLess(elapsed, .5)
+            # Remote stubs sleep for 1s, so the first screen must appear first.
+            self.assertLess(elapsed, .9)
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGTERM)

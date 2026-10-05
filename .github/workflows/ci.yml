@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Ubuntu ${{ matrix.ubuntu }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04", "26.04"]
+    container:
+      image: ubuntu:${{ matrix.ubuntu }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Bootstrap git for checkout
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bash coreutils mawk grep sed findutils python3 fzf fish
+
+      - name: Tool versions
+        run: |
+          bash --version | head -1
+          python3 --version
+          fzf --version
+          fish --version
+
+      - name: Shell syntax check
+        run: |
+          for file in \
+            bin/ub bin/ubti bin/ubtr bin/ubtu bin/ubtd bin/ubtc bin/ubtm bin/ubta \
+            install.sh uninstall.sh; do
+            bash -n "$file"
+          done
+
+      - name: Unit and regression tests
+        env:
+          UBTOOLS_LANG: en
+        run: |
+          python3 -m unittest discover -s tests

@@ -33,7 +33,7 @@ class PackageToolsTests(unittest.TestCase):
             TEST_ROOT=str(self.root),
             LANG="C",
             LC_ALL="C",
-            UBTOOLS_LANG="C",
+            UBTOOLS_LANG="zh",
         )
         self.stub("sudo", 'exec "$@"')
         self.stub(
@@ -153,7 +153,7 @@ cat""",
         self.stub("apt", "printf 'vim/stable 2 amd64 [upgradable from: 1]\\n'; exit 1")
         proc = self.run_tool("ubtu", "--apt", "--list")
         self.assertEqual(proc.stdout, "")
-        self.assertIn("Query failed", proc.stderr)
+        self.assertIn("查询失败或超时", proc.stderr)
         self.assertEqual(self.mutations(), "")
 
     def test_partial_flatpak_ref_version_update_is_visible(self):
@@ -191,7 +191,7 @@ esac""",
         )
         proc = self.run_tool("ubtc", "--snap")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Revision state changed", proc.stderr)
+        self.assertIn("旧修订状态已改变", proc.stderr)
         self.assertEqual(self.mutations(), "")
 
     def test_cleanup_executes_selected_actions_with_native_confirmation(self):
