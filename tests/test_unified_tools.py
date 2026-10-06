@@ -443,9 +443,18 @@ class AITests(unittest.TestCase):
         execute.assert_not_called()
 
     def test_offline_status_does_not_query_versions_online(self):
+        # The doctor dependency probe must not depend on what the host has
+        # installed; this test is about offline behaviour, not environment health.
+        dependencies = {"curl", "bash", "tar", "unzip"}
+
+        def which(name):
+            return f"/usr/bin/{name}" if name in dependencies else None
+
         with patch.object(ai, "detect_all", return_value=[]), patch.object(
             ai, "fetch"
-        ) as fetch, redirect_stdout(io.StringIO()):
+        ) as fetch, patch.object(
+            ai.shutil, "which", side_effect=which
+        ), redirect_stdout(io.StringIO()):
             self.assertEqual(ai.main(["status"]), 0)
             self.assertEqual(ai.main(["doctor", "--offline"]), 0)
         fetch.assert_not_called()
